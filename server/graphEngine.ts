@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   AlertDeliveryReceipt,
   AlertRule,
@@ -886,7 +887,9 @@ export class KnowledgeGraphEngine {
     initialSaleMarketplaceId?: MarketplaceId;
     initialSaleDate?: string;
   }): AssetNode {
-    const slug = `${input.segment}-${input.franchise.slice(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, 'X')}-${Date.now().toString().slice(-4)}`;
+    // The millisecond suffix alone collided when bulk-importing several cards
+    // inside one second. Add a UUID slice so every canonical node has a unique id.
+    const slug = `${input.segment}-${input.franchise.slice(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, 'X')}-${Date.now().toString().slice(-4)}-${randomUUID().slice(0, 8)}`;
     const setId = `SET-${slug}`;
     const subjectId = `SUB-${slug}`;
 
