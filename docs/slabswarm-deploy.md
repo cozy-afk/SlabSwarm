@@ -71,12 +71,23 @@ sudo docker compose up -d --build
 
 ## Access
 
-https://slabswarm.144-21-43-141.sslip.io
+Two paths, with different auth behavior:
 
-Caddy route added to `/home/hermes/homelab/reverse-proxy/Caddyfile` on 2026-11-21,
-validated with `caddy validate` and reloaded without restarting the proxy. It uses the
-shared `import auth` gate, so you log in with the same credentials as the other
-homelab services. A timestamped Caddyfile backup was left beside the original.
+1. Cloudflare quick tunnel (no account/token needed):
+   https://passing-functional-container-kelkoo.trycloudflare.com
+   Managed by `cloudflared-slabswarm.service` under the hermes user's systemd. It points
+   straight at `http://10.99.0.1:3010`, so it BYPASSES the Caddy auth gate. The random
+   URL is the only thing guarding it until you set `SLABGRAPH_ADMIN_PASSCODE` in
+   `docker/enter-keys.sh`. Quick-tunnel URLs change whenever that service restarts;
+   read the current one with:
+   `sudo -u hermes XDG_RUNTIME_DIR=/run/user/$(id -u hermes) journalctl --user -u cloudflared-slabswarm.service -n 100 | grep -o 'https://[^ ]*trycloudflare.com' | tail -1`
+
+2. Caddy route (auth gate, stable hostname):
+   https://slabswarm.144-21-43-141.sslip.io
+   Added to `/home/hermes/homelab/reverse-proxy/Caddyfile` on 2026-11-21, validated
+   with `caddy validate` and reloaded without restarting the proxy. Uses the shared
+   `import auth` gate, so you log in with the same credentials as the other homelab
+   services. A timestamped Caddyfile backup was left beside the original.
 
 ## Known gaps
 
