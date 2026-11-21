@@ -53,6 +53,34 @@ const SAMPLE_IMPORT_SCHEMA = `{
   ]
 }`;
 
+const CHANNEL_SECRET_FIELDS: Record<
+  string,
+  Array<{ key: string; label: string; placeholder: string }>
+> = {
+  'Discord Webhook': [
+    {
+      key: 'DISCORD_WEBHOOK_URL',
+      label: 'Discord webhook URL',
+      placeholder: 'https://discord.com/api/webhooks/...',
+    },
+  ],
+  'Telegram Bot': [
+    {
+      key: 'TELEGRAM_BOT_TOKEN',
+      label: 'Bot token',
+      placeholder: '123456:ABCDEF...',
+    },
+    { key: 'TELEGRAM_CHAT_ID', label: 'Chat ID', placeholder: '-1001234567890' },
+  ],
+  'Hermes Webhook': [
+    {
+      key: 'HERMES_WEBHOOK_URL',
+      label: 'Hermes webhook URL',
+      placeholder: 'https://your-hermes-host/webhook',
+    },
+  ],
+};
+
 export function OnboardingWizard({
   state,
   providers,
@@ -91,6 +119,9 @@ export function OnboardingWizard({
   const [testingChannel, setTestingChannel] = useState<string | null>(null);
   const [channelFeedback, setChannelFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
   const [copiedCurl, setCopiedCurl] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<string | null>(null);
+  const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
+  const [savingSecret, setSavingSecret] = useState(false);
 
   // Step 4: Build vector index & finish
   const [reindexing, setReindexing] = useState(false);
@@ -250,6 +281,47 @@ export function OnboardingWizard({
       });
     } finally {
       setTestingChannel(null);
+    }
+  }
+
+  async function handleSaveSecret(channel: string) {
+    const fields = CHANNEL_SECRET_FIELDS[channel] ?? [];
+    const payload: Record<string, string> = {};
+    for (const field of fields) {
+      const value = (secretDrafts[field.key] ?? '').trim();
+      if (!value) {
+        setChannelFeedback({
+          ok: false,
+          msg: `${field.label} is required before saving.`,
+        });
+        return;
+      }
+      payload[field.key] = value;
+    }
+    setSavingSecret(true);
+    setChannelFeedback(null);
+    try {
+      const res = await apiFetch('/api/settings/secrets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Could not save the secret.');
+      if (json.state) onRefreshState(json.state);
+      setChannelFeedback({
+        ok: true,
+        msg: `Saved ${Object.keys(payload).join(', ')} on the server. Test ping is now available.`,
+      });
+      setEditingChannel(null);
+      setSecretDrafts({});
+    } catch (err) {
+      setChannelFeedback({
+        ok: false,
+        msg: err instanceof Error ? err.message : 'Unable to save secret.',
+      });
+    } finally {
+      setSavingSecret(false);
     }
   }
 
@@ -809,19 +881,78 @@ export function OnboardingWizard({
                       {ch.status.configured ? 'Ready' : 'Not set'}
                     </span>
                   </div>
-                  <p className="mt-1.5 text-[11px] text-[#94A3B8]">{ch.status.hint}</p>
+                  <p className="mt-1.5 text-[11px] text-[#94A3B8]">
+                    {ch.status.hint}
+                    {!ch.status.configured ? ' You can also enter it below.' : ''}
+                  </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={!ch.status.configured || testingChannel !== null}
-                  onClick={() => handleTestChannel(ch.label)}
-                  className="mt-3 inline-flex items-center justify-center gap-1.5 rounded border border-[#243040] bg-[#161D27] px-3 py-1.5 text-[11px] font-medium text-[#E2E8F0] hover:border-emerald-500/50 disabled:opacity-40"
-                >
-                  <Send className="h-3 w-3" />
-                  <span>
-                    {testingChannel === ch.label ? 'Sending...' : 'Send Live Test Ping'}
-                  </span>
-                </button>
+                <div className="mt-3 space-y-2">
+                  {editingChannel === ch.label && (
+                    <div className="space-y-2 rounded border border-[#243040] bg-[#090C10] p-2">
+                      {(CHANNEL_SECRET_FIELDS[ch.label] ?? []).map((field) => (
+                        <label key={field.key} className="block">
+                          <span className="text-[10px] text-[#94A3B8]">{field.label}</span>
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            value={secretDrafts[field.key] ?? ''}
+                            onChange={(e) =>
+                              setSecretDrafts((prev) => ({
+                                ...prev,
+                                [field.key]: e.target.value,
+                              }))
+                            }
+                            placeholder={field.placeholder}
+                            className="mt-1 w-full rounded border border-[#243040] bg-[#0D1117] px-2 py-1 text-[11px] text-[#E2E8F0] outline-none focus:border-emerald-500/50"
+                          />
+                        </label>
+                      ))}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={savingSecret}
+                          onClick={() => handleSaveSecret(ch.label)}
+                          className="rounded border border-emerald-600/50 bg-emerald-950/40 px-2 py-1 text-[11px] font-medium text-emerald-200 hover:border-emerald-400 disabled:opacity-40"
+                        >
+                          {savingSecret ? 'Saving...' : 'Save on server'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingChannel(null);
+                            setSecretDrafts({});
+                          }}
+                          className="rounded border border-[#243040] px-2 py-1 text-[11px] text-[#94A3B8] hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingChannel(editingChannel === ch.label ? null : ch.label);
+                        setSecretDrafts({});
+                      }}
+                      className="rounded border border-[#243040] bg-[#161D27] px-3 py-1.5 text-[11px] font-medium text-[#CBD5E1] hover:border-emerald-500/50"
+                    >
+                      {ch.status.configured ? 'Update' : 'Configure'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!ch.status.configured || testingChannel !== null}
+                      onClick={() => handleTestChannel(ch.label)}
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded border border-[#243040] bg-[#161D27] px-3 py-1.5 text-[11px] font-medium text-[#E2E8F0] hover:border-emerald-500/50 disabled:opacity-40"
+                    >
+                      <Send className="h-3 w-3" />
+                      <span>
+                        {testingChannel === ch.label ? 'Sending...' : 'Send Live Test Ping'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
               </div>
             ))}
           </div>

@@ -68,6 +68,38 @@ const operatorAuth = createOperatorAuthManager(
   (hash) => graphEngine.setAdminPasscodeHash(hash)
 );
 
+// Secrets that may be written from the Setup Guide. Keep this list explicit so
+// a compromised operator session cannot rewrite arbitrary server configuration.
+const EDITABLE_SECRET_KEYS = new Set([
+  'DISCORD_WEBHOOK_URL',
+  'TELEGRAM_BOT_TOKEN',
+  'TELEGRAM_CHAT_ID',
+  'HERMES_WEBHOOK_URL',
+]);
+
+function writeEnvSecrets(updates: Record<string, string>): void {
+  const envPath = path.resolve(process.cwd(), '.env');
+  const raw = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+  const lines = raw.split('\n');
+  const seen = new Set<string>();
+
+  const next = lines.map((line) => {
+    const eq = line.indexOf('=');
+    if (eq <= 0) return line;
+    const key = line.slice(0, eq).trim().replace(/^#\s*/, '');
+    if (!(key in updates) || seen.has(key)) return line;
+    seen.add(key);
+    return `${key}=${updates[key]}`;
+  });
+  for (const [key, value] of Object.entries(updates)) {
+    if (!seen.has(key)) next.push(`${key}=${value}`);
+  }
+
+  fs.writeFileSync(envPath, next.join('\n').replace(/\n+$/, '') + '\n', {
+    mode: 0o600,
+  });
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
@@ -1123,6 +1155,53 @@ async function startServer() {
   // --- Layer 3: Alert Rules & Live Webhook Dispatch (Discord / Telegram / Hermes) ---
   app.get('/api/alerts/channels', (_req, res) => {
     res.json(getAlertChannelStatus());
+  });
+
+  // --- Setup Guide: write allowlisted alert secrets to the host .env ---
+  app.post('/api/settings/secrets', operatorAuth.requireAuth, (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const updates: Record<string, string> = {};
+      for (const [key, rawValue] of Object.entries(body)) {
+        if (!EDITABLE_SECRET_KEYS.has(key)) {
+          res.status(400).json({ error: `Secret key ${key} is not editable here.` });
+          return;
+        }
+        const value = String(rawValue ?? '').trim();
+        const hasControl = [...value].some((c) => c.charCodeAt(0) < 32);
+        if (!value || value.length > 2000 || hasControl) {
+          res.status(400).json({ error: `Invalid value for ${key}.` });
+          return;
+        }
+        if (
+          key.endsWith('_URL') &&
+          !value.startsWith('http://') &&
+          !value.startsWith('https://')
+        ) {
+          res.status(400).json({ error: `${key} must be an http(s) URL.` });
+          return;
+        }
+        updates[key] = value;
+      }
+      if (Object.keys(updates).length === 0) {
+        res.status(400).json({ error: 'No secret values supplied.' });
+        return;
+      }
+      writeEnvSecrets(updates);
+      for (const [key, value] of Object.entries(updates)) {
+        process.env[key] = value;
+      }
+      res.json({
+        ok: true,
+        updatedKeys: Object.keys(updates),
+        alertChannels: getAlertChannelStatus(),
+        state: graphEngine.getState(),
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Unable to save server secrets.',
+      });
+    }
   });
 
   app.post('/api/alerts/dispatch', operatorAuth.requireAuth, async (req, res) => {

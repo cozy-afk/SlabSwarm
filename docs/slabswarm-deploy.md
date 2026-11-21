@@ -63,6 +63,19 @@ with the header it returns a normal `Invalid credential` auth error. Gemini vari
 are left in place only for the optional vector embedding index; they are not needed
 for chat.
 
+## Alert channels from the UI
+
+Setup Guide step 3 can now write the four alert secrets without SSH. Click Configure
+on a channel, paste the value, and Save on server. The authenticated endpoint
+`POST /api/settings/secrets` writes only allowlisted keys to `/app/.env` and updates
+`process.env` immediately, so the test ping button becomes usable in the same session.
+
+Allowed keys: `DISCORD_WEBHOOK_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
+`HERMES_WEBHOOK_URL`. Values are trimmed, capped at 2000 chars, reject control
+characters, and URLs must start with http(s). The compose mount for `.env` is `rw`
+so the container can persist these changes. Other secrets (LLM keys, bridge token,
+passcode) still have to be set in the host `.env` directly.
+
 ## Runs on its own
 
 - `restart: unless-stopped` plus Docker daemon enabled at boot. No human login needed.
