@@ -1,0 +1,89 @@
+{
+  "assets": [
+    {
+      "segment": "TCG",
+      "franchise": "Pokemon",
+      "title": "Charizard 4/102 Holo",
+      "setName": "Base Set Unlimited",
+      "releaseYear": 1999,
+      "cardNumber": "4/102",
+      "variant": "Holo Rare",
+      "subjectName": "Charizard",
+      "topGradePop": 488,
+      "initialSalePriceUsd": 38600,
+      "initialSaleGrade": "PSA 10",
+      "initialSaleMarketplaceId": "ebay_sold",
+      "initialSaleDate": "2026-11-05"
+    },
+    {
+      "segment": "TCG",
+      "franchise": "Pokemon",
+      "title": "Blastoise 2/102 Holo",
+      "setName": "Base Set Unlimited",
+      "releaseYear": 1999,
+      "cardNumber": "2/102",
+      "variant": "Holo Rare",
+      "subjectName": "Blastoise",
+      "initialSalePriceUsd": 11998.99,
+      "initialSaleGrade": "PSA 10",
+      "initialSaleMarketplaceId": "ebay_sold",
+      "initialSaleDate": "2026-11-16"
+    },
+    {
+      "segment": "TCG",
+      "franchise": "Pokemon",
+      "title": "Venusaur 15/102 Holo",
+      "setName": "Base Set Unlimited",
+      "releaseYear": 1999,
+      "cardNumber": "15/102",
+      "variant": "Holo Rare",
+      "subjectName": "Venusaur",
+      "initialSalePriceUsd": 4200,
+      "initialSaleGrade": "PSA 10",
+      "initialSaleMarketplaceId": "ebay_sold",
+      "initialSaleDate": "2026-11-16"
+    },
+    {
+      "segment": "TCG",
+      "franchise": "Pokemon",
+      "title": "Mewtwo 10/102 Holo",
+      "setName": "Base Set Unlimited",
+      "releaseYear": 1999,
+      "cardNumber": "10/102",
+      "variant": "Holo Rare",
+      "subjectName": "Mewtwo",
+      "initialSalePriceUsd": 5700,
+      "initialSaleGrade": "PSA 10",
+      "initialSaleMarketplaceId": "ebay_sold",
+      "initialSaleDate": "2026-11-16"
+    },
+    {
+      "segment": "TCG",
+      "franchise": "Pokemon",
+      "title": "Gyarados 6/102 Holo",
+      "setName": "Base Set Unlimited",
+      "releaseYear": 1999,
+      "cardNumber": "6/102",
+      "variant": "Holo Rare",
+      "subjectName": "Gyarados",
+      "initialSalePriceUsd": 3249,
+      "initialSaleGrade": "PSA 10",
+      "initialSaleMarketplaceId": "ebay_sold",
+      "initialSaleDate": "2026-11-16"
+    },
+    {
+      "segment": "TCG",
+      "franchise": "One Piece",
+      "title": "Monkey D. Luffy Manga OP05-119",
+      "setName": "Awakening of the New Era",
+      "releaseYear": 2023,
+      "cardNumber": "OP05-119",
+      "variant": "Manga Rare",
+      "subjectName": "Monkey D. Luffy",
+      "initialSalePriceUsd": 15158.27,
+      "initialSaleGrade": "PSA 10",
+      "initialSaleMarketplaceId": "ebay_sold",
+      "initialSaleDate": "2026-11-04"
+    }
+  ]
+}
