@@ -69,12 +69,18 @@ git pull --ff-only
 sudo docker compose up -d --build
 ```
 
+## Access
+
+https://slabswarm.144-21-43-141.sslip.io
+
+Caddy route added to `/home/hermes/homelab/reverse-proxy/Caddyfile` on 2026-11-21,
+validated with `caddy validate` and reloaded without restarting the proxy. It uses the
+shared `import auth` gate, so you log in with the same credentials as the other
+homelab services. A timestamped Caddyfile backup was left beside the original.
+
 ## Known gaps
 
-- No Docker on the Windows dev box; the first real image build happens on the target.
-- No domain or reverse-proxy route was added. Caddy lives at
-  `/home/hermes/homelab/reverse-proxy/Caddyfile` and is shared with other services;
-  adding `slabswarm.144-21-43-141.sslip.io` is a separate, deliberate change.
-- OCI ingress rule for port 3010 was not verified. If `curl` from the internet fails,
-  open the port in the OCI security list or add the Caddy route over 443.
+- No Docker on the Windows dev box; the first real image build happened on the target.
+- Port 3010 is bound to `10.99.0.1` only and is NOT open in the OCI security list.
+  Reach the app through the Caddy route over 443, not the raw IP:port.
 - LLM, alert, and Hermes integrations are untested until real keys are entered.
