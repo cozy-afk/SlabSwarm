@@ -1,0 +1,6 @@
+{
+  "name": "SlabGraph",
+  "description": "Universal TCG & Sports Collectibles GraphRAG and Multi-Agent Swarm price intelligence terminal with deterministic valuation math and pluggable server-side LLM orchestration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
