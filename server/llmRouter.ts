@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import type {
   LLMProviderId,
@@ -38,6 +39,9 @@ const VALID_PROVIDER_IDS: LLMProviderId[] = [
 ];
 
 let routingInitialized = false;
+// OpenCode Go requires a stable session header on every request. This app is
+// single-operator, so one process-scoped session ID is sufficient.
+const OPENCODE_SESSION_ID = `slabswarm-${randomUUID()}`;
 const routingConfig: SwarmRoutingConfig = {
   entityResolution: 'gemini',
   outlierFilter: 'gemini',
@@ -285,12 +289,22 @@ async function callOpenAICompatible(
     ? `\nReturn strictly valid JSON with keys: ${Object.keys(options.jsonSchema).join(', ')}.`
     : '';
 
+  const isOpenCodeGo =
+    baseUrl.includes('opencode.ai') &&
+    (baseUrl.includes('/go') || baseUrl.includes('/zen/go'));
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+    'User-Agent': 'SlabSwarm/1.0',
+  };
+  if (isOpenCodeGo) {
+    headers['x-opencode-session'] = OPENCODE_SESSION_ID;
+  }
+
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify({
       model,
       messages: [

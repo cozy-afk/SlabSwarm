@@ -55,8 +55,13 @@ curl -fsS http://10.99.0.1:3010/api/health
 
 Health should then show `providersConfigured` containing `openai` and routing pointing
 at `openai`. `hy4-flash-free` was confirmed present in the live Go model list at
-`https://opencode.ai/zen/go/v1/models`. Gemini variables are left in place only for
-the optional vector embedding index; they are not needed for chat.
+`https://opencode.ai/zen/go/v1/models`. The Go endpoint rejects requests without an
+`x-opencode-session` header, so `server/llmRouter.ts` now sends a process-scoped session
+ID and a `SlabSwarm/1.0` user agent whenever the configured base URL is an OpenCode Go
+endpoint. Verified: a dummy key without the header returns `MissingSessionID` (400);
+with the header it returns a normal `Invalid credential` auth error. Gemini variables
+are left in place only for the optional vector embedding index; they are not needed
+for chat.
 
 ## Runs on its own
 
