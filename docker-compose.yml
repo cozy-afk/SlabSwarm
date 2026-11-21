@@ -1,0 +1,29 @@
+services:
+  slabswarm:
+    build: .
+    image: slabswarm:local
+    container_name: slabswarm
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      SLABGRAPH_DATA_DIR: /app/data
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./data:/app/data
+    ports:
+      - "10.99.0.1:3010:3000"
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
