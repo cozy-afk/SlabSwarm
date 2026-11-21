@@ -29,7 +29,7 @@ sudo docker compose logs -f slabswarm
 ```
 
 Good logs end with `[slabswarm] starting server on port 3000`. The app logs
-`[slabswarm] Gemini key: MISSING` on a keyless boot; that is expected and is not a
+`[slabswarm] OpenCode Go key: MISSING` on a keyless boot; that is expected and is not a
 failure. Bad config (missing dist, unwritable data dir) exits non-zero and the restart
 policy retries with the error in logs.
 
@@ -40,19 +40,23 @@ cd /opt/slabswarm
 bash docker/enter-keys.sh
 ```
 
-Choose quick entry for `GEMINI_API_KEY` plus optional admin passcode/session secret,
-or the full editor for every variable. The script force-recreates the container so the
-new environment is loaded. Verify:
+Choose quick entry for the OpenCode Go key plus optional admin passcode/session secret,
+or the full editor for every variable. Quick entry writes four variables that make the
+app's built-in `openai` provider talk to OpenCode Go:
+`OPENAI_API_KEY=<your key>`, `OPENAI_BASE_URL=https://opencode.ai/zen/go/v1`,
+`OPENAI_MODEL=hy4-flash-free`, `LLM_DEFAULT_PROVIDER=openai`. The key and model are
+prompts; the base URL and provider are fixed by the script. The script force-recreates
+the container so the new environment is loaded. Verify:
 
 ```bash
 sudo docker compose logs --tail=30 slabswarm
 curl -fsS http://10.99.0.1:3010/api/health
 ```
 
-`GEMINI_MODEL` defaults to `gemini-2.5-flash` in the quick-entry path. The scaffold's
-`gemini-4-hydrogen` / `gemini-embedding-2` values look like generator placeholders;
-replace them with model IDs your key actually has access to before expecting LLM
-features to work.
+Health should then show `providersConfigured` containing `openai` and routing pointing
+at `openai`. `hy4-flash-free` was confirmed present in the live Go model list at
+`https://opencode.ai/zen/go/v1/models`. Gemini variables are left in place only for
+the optional vector embedding index; they are not needed for chat.
 
 ## Runs on its own
 

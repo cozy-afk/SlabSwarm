@@ -11,8 +11,8 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 echo
-echo "SlabSwarm key entry"
-echo "  1) Quick entry - Gemini key + admin settings"
+echo "SlabSwarm key entry (server LLM: OpenCode Go via OpenAI-compatible provider)"
+echo "  1) Quick entry - OpenCode Go key + admin settings"
 echo "  2) Full editor  - all settings (nano/vim)"
 read -rp "Choose [1]: " MODE
 MODE="${MODE:-1}"
@@ -31,25 +31,27 @@ if [ "$MODE" = "2" ]; then
   fi
   "$EDITOR_BIN" "$ENV_FILE"
 else
-  read -rsp "GEMINI_API_KEY (hidden): " NEW_GEMINI_KEY; echo
+  read -rsp "OpenCode Go API key (hidden): " NEW_LLM_KEY; echo
   read -rsp "SLABGRAPH_ADMIN_PASSCODE (hidden, Enter to skip): " NEW_ADMIN_PASSCODE; echo
   read -rsp "SLABGRAPH_SESSION_SECRET (hidden, Enter to skip): " NEW_SESSION_SECRET; echo
-  read -rp "GEMINI_MODEL [gemini-2.5-flash]: " NEW_GEMINI_MODEL
-  NEW_GEMINI_MODEL="${NEW_GEMINI_MODEL:-gemini-2.5-flash}"
+  read -rp "OpenCode Go model [hy4-flash-free]: " NEW_LLM_MODEL
+  NEW_LLM_MODEL="${NEW_LLM_MODEL:-hy4-flash-free}"
 
   SLAB_ENV_FILE="$ENV_FILE" \
-  SLAB_GEMINI_KEY="$NEW_GEMINI_KEY" \
+  SLAB_LLM_KEY="$NEW_LLM_KEY" \
   SLAB_ADMIN_PASSCODE="$NEW_ADMIN_PASSCODE" \
   SLAB_SESSION_SECRET="$NEW_SESSION_SECRET" \
-  SLAB_GEMINI_MODEL="$NEW_GEMINI_MODEL" \
+  SLAB_LLM_MODEL="$NEW_LLM_MODEL" \
   python3 - <<'PY'
 import os
 from pathlib import Path
 
 path = Path(os.environ["SLAB_ENV_FILE"])
 updates = {
-    "GEMINI_API_KEY": os.environ["SLAB_GEMINI_KEY"],
-    "GEMINI_MODEL": os.environ["SLAB_GEMINI_MODEL"],
+    "OPENAI_API_KEY": os.environ["SLAB_LLM_KEY"],
+    "OPENAI_BASE_URL": "https://opencode.ai/zen/go/v1",
+    "OPENAI_MODEL": os.environ["SLAB_LLM_MODEL"],
+    "LLM_DEFAULT_PROVIDER": "openai",
 }
 if os.environ["SLAB_ADMIN_PASSCODE"]:
     updates["SLABGRAPH_ADMIN_PASSCODE"] = os.environ["SLAB_ADMIN_PASSCODE"]
