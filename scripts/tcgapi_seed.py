@@ -33,7 +33,8 @@ if not TOKEN:
 
 
 def get_json(url, headers=None):
-    req = urllib.request.Request(url, headers=headers or {})
+    req_headers = {"User-Agent": "SlabSwarm-TCGCollector/1.0", **(headers or {})}
+    req = urllib.request.Request(url, headers=req_headers)
     with urllib.request.urlopen(req, timeout=25) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
