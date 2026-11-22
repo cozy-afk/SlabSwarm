@@ -500,6 +500,34 @@ export type MediaKind =
   | 'SCREENSHOT'
   | 'OCR_IMAGE';
 
+// First-party grade label for market observations. Grading is source-provided
+// text (e.g. "PSA 10", "BGS 9.5", "CGC 8.5", "Raw NM"), validated by the
+// grading_company / certificate_number provenance on the observation rather
+// than by the legacy GradeLabel union.
+export type MarketGradeLabel = string;
+
+// Typed evidence extractable from a research source. These are the facet and
+// evidence kinds named by the design spec (identity-resolution facets plus the
+// claim/price/population evidence kinds used by the research layer).
+export type ResearchObservationKind =
+  | 'CLAIM'
+  | 'ISSUER'
+  | 'SET'
+  | 'NUMBER'
+  | 'NAME'
+  | 'FINISH'
+  | 'PARALLEL'
+  | 'RARITY'
+  | 'LANGUAGE'
+  | 'GRADE'
+  | 'SERIAL'
+  | 'CONDITION'
+  | 'QUANTITY'
+  | 'PRICE'
+  | 'POPULATION'
+  | 'MARKET'
+  | 'OTHER';
+
 export interface PriceComponents {
   listed_amount: number;
   item_amount: number | null;
@@ -519,6 +547,11 @@ export interface PriceComponents {
   fx_rate_to_base: number | null;
   fx_source: string | null;
   fx_as_of: string | null;
+  // Real-value outputs: unknown is null, never zero. Derived with FX provenance
+  // from the raw components above; never overwrite listed_amount.
+  landed_cost_buyer: number | null;
+  net_seller_proceeds: number | null;
+  normalized_item_value: number | null;
   normalization_reason_codes: string[];
   normalization_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
 }
@@ -551,7 +584,7 @@ export interface MarketObservation {
   condition_source: string | null;
   language: string | null;
   finish: string | null;
-  grade: GradeLabel | null;
+  grade: MarketGradeLabel | null;
   grading_company: string | null;
   certificate_number: string | null;
   raw_evidence: Record<string, unknown>;
@@ -637,7 +670,7 @@ export interface ResearchSourceNode {
 export interface ResearchObservationNode {
   id: string;
   sourceId: string;
-  kind: string;
+  kind: ResearchObservationKind;
   value: string;
   confidence: number;
   evidenceIds: string[];

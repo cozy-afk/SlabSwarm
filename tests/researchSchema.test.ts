@@ -7,6 +7,7 @@ import type {
   MediaAssetNode,
   PriceComponents,
   ResearchNoteNode,
+  ResearchObservationKind,
   ResearchObservationNode,
   ResearchProjectionNode,
   ResearchSourceNode,
@@ -60,6 +61,10 @@ const priceComponents = {
   fx_rate_to_base: null,
   fx_source: null,
   fx_as_of: null,
+  // New first-party real-value outputs (null = unknown, never zero).
+  landed_cost_buyer: null,
+  net_seller_proceeds: null,
+  normalized_item_value: null,
   normalization_confidence: 'LOW',
   normalization_reason_codes: ['FEES_UNKNOWN', 'SUSPECT_ZERO_SHIPPING'],
 } satisfies PriceComponents;
@@ -95,9 +100,11 @@ const observation: MarketObservation = {
   condition_source: 'SELLER',
   language: 'EN',
   finish: 'REVERSE_HOLO',
-  grade: 'PSA 10',
-  grading_company: 'PSA',
-  certificate_number: null,
+  // Non-legacy grade string: proves MarketObservation is not constrained to
+  // the old GradeLabel union. Provenance travels alongside it.
+  grade: 'CGC 9.8',
+  grading_company: 'CGC',
+  certificate_number: '123456789',
   raw_evidence: { note: 'reverse holo claim' },
   checksum_sha256: 'b'.repeat(64),
   mime_type: 'text/plain',
@@ -123,6 +130,15 @@ const researchObservation: ResearchObservationNode = {
   evidenceIds: [slabMedia.id],
   createdAt: '2026-11-22T00:00:00.000Z',
 };
+
+// The kind union accepts every spec facet kind and rejects arbitrary strings.
+const allObservationKinds: ResearchObservationKind[] = [
+  'CLAIM', 'ISSUER', 'SET', 'NUMBER', 'NAME', 'FINISH', 'PARALLEL', 'RARITY',
+  'LANGUAGE', 'GRADE', 'SERIAL', 'CONDITION', 'QUANTITY', 'PRICE',
+  'POPULATION', 'MARKET', 'OTHER',
+];
+// @ts-expect-error arbitrary strings are not valid ResearchObservationKind values
+const invalidKind: ResearchObservationKind = 'NOT_A_RESEARCH_KIND';
 
 const researchNote: ResearchNoteNode = {
   id: 'rnote-1',
@@ -166,7 +182,13 @@ test('research and market schema types accept first-party literal shapes', () =>
   assert.equal(slabMedia.kind, 'SLAB_LABEL');
   assert.equal(priceComponents.shipping_amount, null);
   assert.equal(priceComponents.shipping_estimated, true);
+  assert.equal(priceComponents.landed_cost_buyer, null);
+  assert.equal(priceComponents.net_seller_proceeds, null);
+  assert.equal(priceComponents.normalized_item_value, null);
   assert.equal(observation.basis, 'CLAIM');
+  assert.equal(observation.grade, 'CGC 9.8');
+  assert.equal(observation.grading_company, 'CGC');
+  assert.equal(observation.certificate_number, '123456789');
   assert.equal(sellerPolicy, 'seller_net_proceeds');
   assert.equal(buyerPolicy, 'buyer_landed_cost');
   assert.equal(researchNote.subquestions.length, 1);
