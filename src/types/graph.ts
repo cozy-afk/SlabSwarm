@@ -215,7 +215,7 @@ export interface SwarmRunRecord {
   rawTitle: string;
   marketplaceId: MarketplaceId;
   priceUsd: number;
-  verdict: 'COMMITTED_VERIFIED' | 'QUARANTINED_OUTLIER' | 'CATALYST_INJECTED';
+  verdict: 'COMMITTED_VERIFIED' | 'QUARANTINED_OUTLIER' | 'CATALYST_INJECTED' | 'HELD_UNRESOLVED';
   resolvedAssetId: string | null;
   resolvedAssetTitle: string | null;
   resolvedGrade: GradeLabel | null;

@@ -25,6 +25,7 @@ import type {
   SwarmRunRecord,
   TriggeredAlert,
   ResearchSourceNode,
+  ResearchNoteNode,
   MarketBasis,
   MediaAssetDerivedPatch,
   MediaAssetNode,
@@ -1583,6 +1584,27 @@ export async function pushListingToSlabGraph(listing: {
     this.db.researchSources.push(source);
     this.persist();
     return source;
+  }
+
+  /**
+   * Persist a question-first research note. All fields are supplied by the
+   * caller (deterministic facts or a provider); this engine never synthesizes
+   * content or confidence, so missing evidence stays visible as `missingData`.
+   */
+  public addResearchNote(input: Omit<ResearchNoteNode, 'id' | 'createdAt'>): ResearchNoteNode {
+    const note: ResearchNoteNode = {
+      id: `note-${randomUUID()}`,
+      question: input.question,
+      subquestions: [...input.subquestions],
+      evidenceIds: [...input.evidenceIds],
+      synthesis: input.synthesis,
+      confidence: input.confidence,
+      missingData: [...input.missingData],
+      createdAt: new Date().toISOString(),
+    };
+    this.db.researchNotes.push(note);
+    this.persist();
+    return note;
   }
 
   public getResearchState(): {

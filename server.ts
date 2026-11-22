@@ -222,6 +222,153 @@ export async function createApp() {
     res.json(graphEngine.getResearchState());
   });
 
+  // --- Question-first research (Task 6) -----------------------------------
+  // A research question decomposes into subquestions and is answered against
+  // first-party deterministic evidence only. LLM output may reorganize that
+  // evidence but may never invent facts, prices, or confidence. With no
+  // provider (or insufficient evidence) the note is still saved, explicitly
+  // marked LOW confidence with insufficient evidence and missingData.
+  app.post('/api/research/question', operatorAuth.requireAuth, async (req, res) => {
+    const { question, providerOverride } = req.body ?? {};
+    if (typeof question !== 'string' || question.trim() === '') {
+      res.status(400).json({ error: 'A non-empty research question is required.' });
+      return;
+    }
+    const cleanQuestion = question.trim();
+
+    try {
+      const state = graphEngine.getResearchState();
+      const evidenceIds: string[] = [];
+      const evidenceFacts: Array<{ id: string; kind: string; detail: string }> = [];
+
+      // Deterministic facts authority: only first-party collections are
+      // eligible evidence. No external or fabricated numbers enter here.
+      for (const source of state.researchSources) {
+        evidenceIds.push(source.id);
+        evidenceFacts.push({
+          id: source.id,
+          kind: 'researchSource',
+          detail: `${source.type} · ${source.title} · basis=${source.basis}`,
+        });
+      }
+      for (const observation of state.researchObservations) {
+        evidenceIds.push(observation.id);
+        evidenceFacts.push({
+          id: observation.id,
+          kind: 'researchObservation',
+          detail: `${observation.kind} · ${observation.value} (confidence=${observation.confidence})`,
+        });
+      }
+      for (const media of state.mediaAssets) {
+        evidenceIds.push(media.id);
+        evidenceFacts.push({
+          id: media.id,
+          kind: 'mediaAsset',
+          detail: `${media.kind} · target=${media.target_type} · sha256=${media.checksum_sha256.slice(0, 12)}`,
+        });
+      }
+
+      // Deterministic subquestion decomposition — never invented by the LLM.
+      const subquestions: string[] = [
+        `What first-party evidence is available for: ${cleanQuestion}?`,
+        'Which claims are supported by deterministic facts, and which are unsupported?',
+        'What evidence is still missing to answer with confidence?',
+      ];
+
+      const missingData: string[] = [];
+      if (evidenceIds.length === 0) {
+        missingData.push('No first-party research sources, observations, or media evidence are available.');
+      }
+      if (state.researchSources.every((s) => s.basis === 'UNKNOWN')) {
+        missingData.push('No source with a known market basis (SOLD / ASKING / GUIDE) is available.');
+      }
+      missingData.push('No verified price comps are attached to this question.');
+
+      const evidenceText = evidenceFacts.length
+        ? evidenceFacts.map((f) => `- [${f.id}] ${f.detail}`).join('\n')
+        : '(none — no first-party evidence is available)';
+
+      const hasProvider = getAvailableProviders().some((p) => p.configured);
+      let synthesis: string;
+      let confidence = 0.2; // LOW by default; deterministic authority caps it.
+      let confidenceLabel: 'LOW' | 'MEDIUM' = 'LOW';
+      let evidenceMode = 'deterministic_fallback';
+      let providerUsed: string | undefined;
+
+      if (hasProvider) {
+        try {
+          const synthesized = await invokeSwarmLLM<{
+            synthesis?: string;
+            confidence?: string;
+            subquestions?: string[];
+          }>({
+            role: 'graphRagSynthesis',
+            providerOverride: providerOverride as LLMProviderId | undefined,
+            systemInstruction:
+              'You are the Question-First Research Agent. Answer ONLY from the deterministic first-party evidence supplied. Never invent, estimate, or recalculate prices, dates, grades, or counts. If the evidence does not support a claim, say so explicitly. Cite evidence ids in brackets. Return JSON with: synthesis (string), confidence (LOW/MEDIUM/HIGH), subquestions (array of strings).',
+            prompt: `Research Question: ${cleanQuestion}\n\nSubquestions:\n${subquestions.map((s) => `- ${s}`).join('\n')}\n\nFirst-party evidence (authoritative):\n${evidenceText}\n\nKnown missing data:\n${missingData.map((m) => `- ${m}`).join('\n')}`,
+            jsonSchema: {
+              synthesis: { type: 'STRING', description: 'Evidence-grounded synthesis. No invented numbers.' },
+              confidence: { type: 'STRING', description: 'LOW, MEDIUM, or HIGH; must not exceed what the evidence supports.' },
+              subquestions: { type: 'ARRAY', itemsType: 'STRING', description: 'Subquestions answered.' },
+            },
+          });
+          const data = synthesized.data;
+          // A provider may only speak when there is first-party evidence to
+          // ground it; unsupported claims fall back to insufficient evidence,
+          // never to an invented number.
+          if (typeof data?.synthesis === 'string' && data.synthesis.trim() && evidenceIds.length > 0) {
+            synthesis = data.synthesis.trim();
+            // Deterministic authority caps the model's confidence: with no
+            // evidence or no known basis it can never exceed LOW.
+            const requested = String(data.confidence || '').toUpperCase();
+            const hasKnownBasis = state.researchSources.some((s) => s.basis !== 'UNKNOWN');
+            if (hasKnownBasis && (requested === 'MEDIUM' || requested === 'HIGH')) {
+              confidence = 0.6;
+              confidenceLabel = 'MEDIUM';
+            }
+            if (Array.isArray(data.subquestions) && data.subquestions.length > 0) {
+              subquestions.splice(0, subquestions.length, ...data.subquestions.filter((q) => typeof q === 'string'));
+            }
+            evidenceMode = 'swarm_provider';
+            providerUsed = `${synthesized.providerLabel} (${synthesized.model})`;
+          } else {
+            synthesis = 'Insufficient evidence: no first-party evidence supports a grounded answer; no values are inferred.';
+          }
+        } catch {
+          synthesis = 'Insufficient evidence: the research provider was unavailable; the deterministic fallback was used.';
+        }
+      } else {
+        synthesis =
+          evidenceIds.length === 0
+            ? 'Insufficient evidence: no first-party sources, observations, or media are available to answer this question. No values are inferred.'
+            : 'Insufficient evidence: first-party evidence was found but no Swarm provider is configured to synthesize it; values are not inferred.';
+      }
+
+      if (missingData.length === 0) missingData.push('Unspecified evidence gaps.');
+
+      const note = graphEngine.addResearchNote({
+        question: cleanQuestion,
+        subquestions,
+        evidenceIds,
+        synthesis,
+        confidence,
+        missingData,
+      });
+      res.status(201).json({
+        note,
+        confidenceLabel,
+        evidenceMode,
+        ...(providerUsed ? { providerUsed } : {}),
+        evidenceFacts,
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to record research question.',
+      });
+    }
+  });
+
   // --- First-party media evidence ingest / retrieval (Task 5) -------------
   // Raw bytes are immutable; all derived OCR/recognition data is attached to
   // the record. License metadata is mandatory for commercial use. Kinds are
@@ -633,15 +780,9 @@ export async function createApp() {
         providerOverride,
       } = req.body ?? {};
 
-      const allAssets = graphEngine.getAssets();
-      if (allAssets.length === 0) {
-        res.status(400).json({
-          error:
-            'Your canonical catalog is empty. Add at least one collectible via the Setup Guide or "+ Register Collectible" before running Swarm ingestion.',
-        });
-        return;
-      }
-
+      // Note: an empty canonical catalog no longer blocks ingest. An
+      // unresolved raw title is captured as first-party research evidence
+      // instead of being forced onto a fabricated asset.
       let itemKind: 'LISTING' | 'CATALYST' =
         kind === 'CATALYST' ? 'CATALYST' : 'LISTING';
       let itemTitle = String(rawTitle || '').trim();
@@ -673,7 +814,52 @@ export async function createApp() {
         return;
       }
 
+      const allAssets = graphEngine.getAssets();
       const steps: SwarmStepTrace[] = [];
+
+      // No canonical assets yet: hold the raw listing as first-party
+      // research evidence. Never fabricate an asset ID or a price from an
+      // unresolved title; a research question can be asked against it later.
+      if (allAssets.length === 0) {
+        const source = graphEngine.addResearchSource({
+          type: 'RAW_LISTING',
+          title: itemTitle,
+          rawText: [
+            itemKind === 'CATALYST' ? `Catalyst headline: ${itemTitle}` : `Raw listing title: ${itemTitle}`,
+            itemNotes ? `Seller notes: ${itemNotes}` : '',
+            `Marketplace: ${itemMarketplace}`,
+          ].filter(Boolean).join('\n'),
+          tags: ['unresolved-ingest', 'no-canonical-catalog'],
+          // Basis is explicit UNKNOWN: a raw, unresolved title is not a SOLD comp.
+          basis: 'UNKNOWN',
+        });
+        steps.push({
+          agent: 'Deterministic Parser',
+          status: 'PASSED',
+          provider: 'Deterministic Regex Engine',
+          latencyMs: 1,
+          summary: 'Captured unresolved raw title as first-party research evidence; no canonical asset or price inferred.',
+          payload: { sourceId: source.id, basis: source.basis },
+        });
+        if (queueId) graphEngine.removeQueuedItem(String(queueId));
+        const runRecord: SwarmRunRecord = {
+          id: `RUN-${Date.now().toString().slice(-5)}`,
+          timestamp: new Date().toISOString(),
+          kind: itemKind,
+          rawTitle: itemTitle,
+          marketplaceId: itemMarketplace,
+          priceUsd: 0,
+          verdict: 'HELD_UNRESOLVED',
+          resolvedAssetId: null,
+          resolvedAssetTitle: null,
+          resolvedGrade: null,
+          steps,
+          graphDiff: `+1 ResearchSource (${source.id}) — unresolved raw title, no asset or price inferred`,
+        };
+        graphEngine.addSwarmRun(runRecord);
+        res.json({ run: runRecord, state: graphEngine.getState() });
+        return;
+      }
 
       // Hybrid Vector Candidate Narrowing when catalog grows large (> 12 assets)
       let candidateAssets = allAssets;
