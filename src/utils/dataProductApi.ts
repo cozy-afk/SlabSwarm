@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 
-import type { ApiEnvelope, ApiMeta } from '../types/dataProduct.ts';
+import type { ActiveReport, ApiEnvelope, ApiMeta } from '../types/dataProduct.ts';
 import { apiFetch } from './apiClient.ts';
 
 /**
  * Route templates from the approved data-product design spec. The UI is built
  * contract-first: these are the planned endpoints the backend lanes serve.
- * The literal `:id` / `:source` placeholders make the contract greppable.
+ * The literal `:id` / `:source` route tokens make the contract greppable.
  */
 export const ROUTES = {
   evidence: '/api/evidence',
@@ -19,6 +19,7 @@ export const ROUTES = {
   comps: '/api/comps/:id',
   market: '/api/market/:id',
   harvestLegacy: '/api/intelligence/harvest-legacy',
+  activeReport: '/api/intelligence/active-report',
   discoverySweep: '/api/intelligence/discovery-sweep',
   findings: '/api/intelligence/findings',
   swarmRun: '/api/swarm/research/run',
@@ -34,7 +35,7 @@ export const ROUTES = {
   sqlSaved: '/api/sql/saved',
 } as const;
 
-/** Substitute route placeholders without ever emitting an unencoded value. */
+/** Substitute route tokens without ever emitting an unencoded value. */
 export function buildRoute(
   template: string,
   params: Record<string, string | number>
@@ -87,6 +88,11 @@ export async function postEnvelope<T>(
       body: JSON.stringify(body),
     })
   );
+}
+
+/** Typed read of the real, evidence-backed active trading report. */
+export function fetchActiveReport(): Promise<ApiEnvelope<ActiveReport>> {
+  return fetchEnvelope<ActiveReport>(ROUTES.activeReport);
 }
 
 export interface EnvelopeState<T> {
