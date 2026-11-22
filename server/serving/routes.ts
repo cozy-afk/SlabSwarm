@@ -16,12 +16,13 @@ import {
   UNKNOWN,
   envelope,
   errorEnvelope,
-  findCatalogAsset,
   isMarketBasis,
   listPrintings,
   newContext,
+  resolveCatalogIdentity,
   searchCatalog,
-  toCatalogItem,
+  searchLedgerCatalog,
+  type CatalogItemView,
   type MarketBasis,
   type RequestContext,
 } from './catalog.ts';
@@ -105,9 +106,17 @@ export function createServingRouter(options: ServingRouteOptions = {}): Router {
   const catalogWarnings = [
     'identityConfidence is derived from canonical graph presence; getState() exposes no identity-decision record.',
   ];
+  const ledgerIdentityWarning =
+    'Identity was derived from first-party ingest ledger evidence; identityConfidence is LOW.';
+
+  function identityWarnings(identity: CatalogItemView): string[] {
+    return identity.identityConfidence === 'LOW'
+      ? [...catalogWarnings, ledgerIdentityWarning]
+      : catalogWarnings;
+  }
 
   // GET /api/catalog/search --------------------------------------------------
-  router.get('/api/catalog/search', route((req, res, context) => {
+  router.get('/api/catalog/search', route(async (req, res, context) => {
     const q = stringQuery(req.query.q);
     if (q === undefined || q.trim() === '') {
       throw new ServingValidationError('Query parameter q is required and must be a non-empty string.');
@@ -116,10 +125,23 @@ export function createServingRouter(options: ServingRouteOptions = {}): Router {
     const state = engine.getState();
     const warnings = [...catalogWarnings];
     if (!state.assets?.length) warnings.push('Catalog is empty; no identities are available.');
-    const items = searchCatalog(state, q, context.generatedAt, limit);
-    if (!items.length && state.assets?.length) warnings.push(`No catalog items matched q=${q}.`);
+    // Search the graph first, then the ledger. Merge deterministically by id and
+    // apply the limit once so neither source can crowd out the other.
+    const graphItems = searchCatalog(state, q, context.generatedAt, maxLimit);
+    const ledgerItems = await searchLedgerCatalog(repositories.evidence, q);
+    const byId = new Map<string, CatalogItemView>();
+    for (const item of [...graphItems, ...ledgerItems]) {
+      if (!byId.has(item.id)) byId.set(item.id, item);
+    }
+    const items = [...byId.values()]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .slice(0, limit);
+    if (!items.length && (state.assets?.length || ledgerItems.length)) {
+      warnings.push(`No catalog items matched q=${q}.`);
+    }
+    if (ledgerItems.length) warnings.push(ledgerIdentityWarning);
     res.status(200).json(envelope(items, context, {
-      source: 'graphEngine.getState()',
+      source: ledgerItems.length ? 'graphEngine.getState() + ingest-ledger' : 'graphEngine.getState()',
       basis: UNKNOWN,
       currency: UNKNOWN,
       warnings,
@@ -127,17 +149,20 @@ export function createServingRouter(options: ServingRouteOptions = {}): Router {
   }));
 
   // GET /api/catalog/:id -----------------------------------------------------
-  router.get('/api/catalog/:id', route((req, res, context) => {
-    const state = engine.getState();
-    const asset = findCatalogAsset(state, req.params.id);
-    if (!asset) return notFound(res, context, 'Catalog item', catalogWarnings);
-    const item = toCatalogItem(asset, context.generatedAt);
-    res.status(200).json(envelope(item, context, {
-      source: item.source,
-      basis: item.basis,
-      currency: item.currency,
-      provenance: item.provenance,
-      warnings: catalogWarnings,
+  router.get('/api/catalog/:id', route(async (req, res, context) => {
+    const identity = await resolveCatalogIdentity(
+      req.params.id,
+      engine.getState(),
+      repositories.evidence,
+      context.generatedAt,
+    );
+    if (!identity) return notFound(res, context, 'Catalog item', catalogWarnings);
+    res.status(200).json(envelope(identity, context, {
+      source: identity.source,
+      basis: identity.basis,
+      currency: identity.currency,
+      provenance: identity.provenance,
+      warnings: identityWarnings(identity),
     }));
   }));
 
@@ -162,10 +187,13 @@ export function createServingRouter(options: ServingRouteOptions = {}): Router {
   router.get('/api/pricing/:id', route(async (req, res, context) => {
     const basis = parseBasis(req.query.basis);
     const source = stringQuery(req.query.source);
-    const state = engine.getState();
-    if (!findCatalogAsset(state, req.params.id)) {
-      return notFound(res, context, 'Catalog item');
-    }
+    const identity = await resolveCatalogIdentity(
+      req.params.id,
+      engine.getState(),
+      repositories.evidence,
+      context.generatedAt,
+    );
+    if (!identity) return notFound(res, context, 'Catalog item');
     const { facts, warnings } = await loadFacts(
       repositories.marketObservations,
       repositories.evidence,
@@ -181,17 +209,24 @@ export function createServingRouter(options: ServingRouteOptions = {}): Router {
       basis,
       currency: built.value.currency,
       provenance: built.value.provenance,
-      warnings: [...warnings, ...built.warnings],
+      warnings: [
+        ...(identity.identityConfidence === 'LOW' ? [ledgerIdentityWarning] : []),
+        ...warnings,
+        ...built.warnings,
+      ],
     }));
   }));
 
   // GET /api/comps/:id ------------------------------------------------------
   router.get('/api/comps/:id', route(async (req, res, context) => {
     const source = stringQuery(req.query.source);
-    const state = engine.getState();
-    if (!findCatalogAsset(state, req.params.id)) {
-      return notFound(res, context, 'Catalog item');
-    }
+    const identity = await resolveCatalogIdentity(
+      req.params.id,
+      engine.getState(),
+      repositories.evidence,
+      context.generatedAt,
+    );
+    if (!identity) return notFound(res, context, 'Catalog item');
     const { facts, warnings } = await loadFacts(
       repositories.marketObservations,
       repositories.evidence,
@@ -205,16 +240,23 @@ export function createServingRouter(options: ServingRouteOptions = {}): Router {
       source: built.value.length ? built.value[0].source : 'ingest-ledger',
       basis: 'SOLD',
       currency: built.value.length ? built.value[0].currency : UNKNOWN,
-      warnings: [...warnings, ...built.warnings],
+      warnings: [
+        ...(identity.identityConfidence === 'LOW' ? [ledgerIdentityWarning] : []),
+        ...warnings,
+        ...built.warnings,
+      ],
     }));
   }));
 
   // GET /api/market/:id -----------------------------------------------------
   router.get('/api/market/:id', route(async (req, res, context) => {
-    const state = engine.getState();
-    if (!findCatalogAsset(state, req.params.id)) {
-      return notFound(res, context, 'Catalog item');
-    }
+    const identity = await resolveCatalogIdentity(
+      req.params.id,
+      engine.getState(),
+      repositories.evidence,
+      context.generatedAt,
+    );
+    if (!identity) return notFound(res, context, 'Catalog item');
     const { facts, warnings } = await loadFacts(
       repositories.marketObservations,
       repositories.evidence,
@@ -227,6 +269,7 @@ export function createServingRouter(options: ServingRouteOptions = {}): Router {
       currency: built.value.currency,
       provenance: built.value.provenance,
       warnings: [
+        ...(identity.identityConfidence === 'LOW' ? [ledgerIdentityWarning] : []),
         ...warnings,
         ...built.warnings,
         'Snapshot counts are basis-separated under data.sources[].basisBreakdown; sources are never summed.',

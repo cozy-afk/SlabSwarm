@@ -5,22 +5,33 @@ import {
   makeEmptyState,
   makeState,
   seedObservations,
+  seedSparseLedgerEvidence,
+  seedTcgLedger,
   startApp,
+  TCG_LEDGER_ID,
   type StartedApp,
 } from './fixtures.ts';
 
 let app: StartedApp;
 let emptyApp: StartedApp;
+let ledgerApp: StartedApp;
+let sparseApp: StartedApp;
 
 before(async () => {
   app = await startApp(makeState());
   await seedObservations(app.repositories);
   emptyApp = await startApp(makeEmptyState());
+  ledgerApp = await startApp(makeState());
+  await seedTcgLedger(ledgerApp.repositories);
+  sparseApp = await startApp(makeState());
+  await seedSparseLedgerEvidence(sparseApp.repositories, 'tcg:sparse-1');
 });
 
 after(() => {
   app?.server.close();
   emptyApp?.server.close();
+  ledgerApp?.server.close();
+  sparseApp?.server.close();
 });
 
 function assertEnvelope(body: any): asserts body is { data: any; meta: any } {
@@ -134,4 +145,44 @@ test('invalid query parameters return 400 error envelopes', async () => {
     assert.equal(body.code, 'validation_error', path);
     assert.ok(body.meta.contractVersion, path);
   }
+});
+
+test('a graph-unknown ledger id resolves catalog identity from evidence parsedPayload', async () => {
+  const { status, body } = await getJson(ledgerApp.baseUrl, `/api/catalog/${TCG_LEDGER_ID}`);
+  assert.equal(status, 200);
+  assertEnvelope(body);
+  assert.equal(body.data.id, TCG_LEDGER_ID);
+  assert.equal(body.data.name, 'Amalgamight, Close Encounter');
+  assert.equal(body.data.game, 'Alpha Clash');
+  assert.equal(body.data.set, 'Nexus of Power');
+  assert.equal(body.data.identityConfidence, 'LOW');
+  assertProvenance(body.data);
+  assert.match(body.data.provenance.source, /ingest-ledger/);
+  assert.match(body.data.provenance.source, /tcgapis/);
+  assert.ok(
+    body.data.provenance.lineage.some((entry: string) => entry.includes('ev-')),
+    'provenance names the evidence id',
+  );
+  assert.equal(body.meta.provenance.confidence, 'LOW');
+  assert.ok(body.meta.warnings.some((w: string) => w.includes('LOW')));
+});
+
+test('ledger-derived identity never invents missing facets; absent fields are UNKNOWN', async () => {
+  const { status, body } = await getJson(sparseApp.baseUrl, '/api/catalog/tcg:sparse-1');
+  assert.equal(status, 200);
+  assert.equal(body.data.name, 'Sparse Card');
+  assert.equal(body.data.game, 'UNKNOWN');
+  assert.equal(body.data.set, 'UNKNOWN');
+  assert.equal(body.data.number, 'UNKNOWN');
+  assert.equal(body.data.identityConfidence, 'LOW');
+  assert.equal(body.data.provenance.confidence, 'LOW');
+});
+
+test('catalog search includes ledger-derived identities for graph-unknown ids', async () => {
+  const { status, body } = await getJson(ledgerApp.baseUrl, '/api/catalog/search?q=Amalgamight');
+  assert.equal(status, 200);
+  assertEnvelope(body);
+  assert.equal(body.data.length, 1);
+  assert.equal(body.data[0].id, TCG_LEDGER_ID);
+  assert.equal(body.data[0].identityConfidence, 'LOW');
 });

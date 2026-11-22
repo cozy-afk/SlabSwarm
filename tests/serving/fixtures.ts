@@ -133,6 +133,109 @@ export async function seedObservations(repositories: IngestRepositories): Promis
   await add(cardmarket.id, 'A1', 'SOLD', 90, 'EUR', 'cardmarket', '2026-11-20T00:00:00.000Z');
 }
 
+/** A first-party ledger id that has no asset in the graph snapshot. */
+export const TCG_LEDGER_ID = 'tcg:719440';
+
+const TCG_FACETS = {
+  targetIdentityRef: TCG_LEDGER_ID,
+  name: 'Amalgamight, Close Encounter',
+  gameName: 'Alpha Clash',
+  expansionName: 'Nexus of Power',
+  number: '44',
+};
+
+/**
+ * Seed a graph-unknown id using the same evidence/parsedPayload shape the
+ * TCGAPIs chain harvest writes. Identity facets live in the ledger; the graph
+ * snapshot has no matching asset. GUIDE and SOLD observations stay separate.
+ */
+export async function seedTcgLedger(repositories: IngestRepositories): Promise<void> {
+  const write = async (
+    sourceId: string,
+    sourceRecordId: string,
+    parsedPayload: Record<string, unknown>,
+  ) => (await repositories.evidence.createIdempotent({
+    sourceId,
+    sourceRecordId,
+    sourceUri: `https://example.test/${sourceRecordId}`,
+    capturedAt: '2026-11-21T10:00:00.000Z',
+    observedAt: '2026-11-21T09:00:00.000Z',
+    checksum: `checksum-${sourceRecordId}`,
+    mimeType: 'application/json',
+    rawRef: `raw/${sourceRecordId}.json`,
+    trustTier: 'MEDIUM',
+    lineage: ['tcgapis-chain', sourceRecordId],
+    parseStatus: 'PARSED',
+    parsedPayload,
+  })).record;
+
+  await write('tcgapis', 'tcg-card-719440', {
+    source: 'tcgapis',
+    recordKind: 'CATALOG_CARD',
+    basis: 'UNKNOWN',
+    ...TCG_FACETS,
+  });
+  const guide = await write('tcgapis', 'tcg-price-719440', {
+    source: 'tcgapis',
+    recordKind: 'PRICE_GUIDE',
+    basis: 'GUIDE',
+    currency: 'USD',
+    price: 0.65,
+    ...TCG_FACETS,
+  });
+  const sold = await write('ebay_sold', 'ebay-sale-719440', {
+    source: 'ebay_sold',
+    recordKind: 'SALE',
+    basis: 'SOLD',
+    currency: 'USD',
+    price: 12,
+    ...TCG_FACETS,
+  });
+
+  const add = async (
+    evidenceId: string,
+    basis: 'GUIDE' | 'SOLD',
+    amount: number,
+    marketplace: string,
+    day: number,
+  ) => repositories.marketObservations.create({
+    evidenceId,
+    targetIdentityRef: TCG_LEDGER_ID,
+    basis,
+    amount,
+    currency: 'USD',
+    marketplace,
+    observedAt: new Date(FIXED_NOW.getTime() - day * 86_400_000).toISOString(),
+    status: 'NORMALIZED',
+  });
+
+  await add(guide.id, 'GUIDE', 0.20, 'tcgapis', 1);
+  await add(guide.id, 'GUIDE', 0.65, 'tcgapis', 2);
+  await add(guide.id, 'GUIDE', 1.00, 'tcgapis', 3);
+  await add(sold.id, 'SOLD', 10, 'ebay_sold', 1);
+  await add(sold.id, 'SOLD', 12, 'ebay_sold', 2);
+  await add(sold.id, 'SOLD', 14, 'ebay_sold', 3);
+}
+
+/** Ledger evidence carrying only a name; the other identity facets are absent. */
+export async function seedSparseLedgerEvidence(
+  repositories: IngestRepositories,
+  id: string,
+): Promise<void> {
+  await repositories.evidence.createIdempotent({
+    sourceId: 'tcgapis',
+    sourceRecordId: `sparse-${id}`,
+    sourceUri: `https://example.test/sparse/${encodeURIComponent(id)}`,
+    capturedAt: '2026-11-21T10:00:00.000Z',
+    observedAt: '2026-11-21T09:00:00.000Z',
+    checksum: `checksum-sparse-${id}`,
+    mimeType: 'application/json',
+    rawRef: `raw/sparse-${id}.json`,
+    parseStatus: 'PARSED',
+    parsedPayload: { targetIdentityRef: id, name: 'Sparse Card' },
+  });
+}
+
 export async function getJson(baseUrl: string, path: string): Promise<{ status: number; body: any }> {
   const response = await fetch(`${baseUrl}${path}`);
   return { status: response.status, body: await response.json() };

@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict';
 import { test, before, after } from 'node:test';
-import { getJson, makeState, seedObservations, startApp, type StartedApp } from './fixtures.ts';
+import { getJson, makeState, seedObservations, seedTcgLedger, startApp, TCG_LEDGER_ID, type StartedApp } from './fixtures.ts';
 
 let app: StartedApp;
+let ledgerApp: StartedApp;
 
 before(async () => {
   app = await startApp(makeState());
   await seedObservations(app.repositories);
+  ledgerApp = await startApp(makeState());
+  await seedTcgLedger(ledgerApp.repositories);
 });
 
 after(() => {
   app?.server.close();
+  ledgerApp?.server.close();
 });
 
 const ROWS_WITH_BASIS = new Set(['SOLD', 'ASKING', 'OFFER', 'GUIDE', 'CLAIM', 'POPULATION', 'UNKNOWN']);
@@ -160,4 +164,66 @@ test('served valuations are deterministic across repeated calls', async () => {
   const marketFirst = (await getJson(app.baseUrl, '/api/market/A1')).body.data;
   const marketSecond = (await getJson(app.baseUrl, '/api/market/A1')).body.data;
   assert.deepEqual(marketSecond, marketFirst);
+});
+
+test('pricing resolves a graph-unknown ledger id and preserves GUIDE basis and currency', async () => {
+  const { status, body } = await getJson(
+    ledgerApp.baseUrl,
+    `/api/pricing/${TCG_LEDGER_ID}?basis=GUIDE`,
+  );
+  assert.equal(status, 200);
+  assertMeta(body);
+  assert.equal(body.data.targetId, TCG_LEDGER_ID);
+  assert.equal(body.data.basis, 'GUIDE');
+  assert.equal(body.data.currency, 'USD');
+  assert.deepEqual([body.data.low, body.data.median, body.data.high], [0.2, 0.65, 1]);
+  assert.equal(body.data.sampleSize, 3);
+  assert.equal(body.meta.basis, 'GUIDE');
+  assert.equal(body.meta.currency, 'USD');
+  assertFactRow(body.data);
+  assert.equal(body.data.provenance.confidence, 'MEDIUM');
+});
+
+test('comps resolves a graph-unknown ledger id with SOLD-only, basis-safe rows', async () => {
+  const { status, body } = await getJson(ledgerApp.baseUrl, `/api/comps/${TCG_LEDGER_ID}`);
+  assert.equal(status, 200);
+  assertMeta(body);
+  assert.equal(body.data.length, 3);
+  for (const row of body.data) {
+    assert.equal(row.basis, 'SOLD');
+    assert.equal(row.currency, 'USD');
+    assertFactRow(row);
+  }
+  assert.deepEqual(body.data.map((row: any) => row.amount).sort((a: number, b: number) => a - b), [10, 12, 14]);
+  assert.equal(body.meta.basis, 'SOLD');
+  assert.ok(body.meta.warnings.some((w: string) => w.includes('non-SOLD')), 'GUIDE rows excluded');
+});
+
+test('market resolves a graph-unknown ledger id with sources kept separate', async () => {
+  const { status, body } = await getJson(ledgerApp.baseUrl, `/api/market/${TCG_LEDGER_ID}`);
+  assert.equal(status, 200);
+  assertMeta(body);
+  assert.equal(body.data.targetId, TCG_LEDGER_ID);
+  assert.equal(body.data.sources.length, 2);
+  const guide = body.data.sources.find((s: any) => s.source === 'tcgapis');
+  const sold = body.data.sources.find((s: any) => s.source === 'ebay_sold');
+  assert.ok(guide && sold);
+  assert.equal(guide.basisBreakdown.GUIDE, 3);
+  assert.equal(sold.basisBreakdown.SOLD, 3);
+  assert.equal(guide.askCount, 'UNKNOWN');
+  assert.equal(sold.soldCount30d, 3);
+  for (const source of body.data.sources) assertFactRow(source);
+  assertFactRow(body.data);
+  assert.ok(body.meta.warnings.some((w: string) => w.includes('never summed')));
+});
+
+test('pricing of a graph-unknown ledger id with no matching basis stays UNKNOWN, not zero', async () => {
+  const { status, body } = await getJson(ledgerApp.baseUrl, `/api/pricing/${TCG_LEDGER_ID}?basis=OFFER`);
+  assert.equal(status, 200);
+  assert.equal(body.data.low, 'UNKNOWN');
+  assert.equal(body.data.median, 'UNKNOWN');
+  assert.equal(body.data.high, 'UNKNOWN');
+  assert.equal(body.data.sampleSize, 0);
+  assert.equal(body.meta.basis, 'OFFER');
+  assert.ok(body.meta.warnings.some((w: string) => w.includes('all prices are UNKNOWN')));
 });
