@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 
 const legacyMod = () => import('../../server/ingest/adapters/legacy.ts');
@@ -143,4 +146,58 @@ test('loadLegacySnapshot fails clearly when the file is missing', async () => {
     /legacy snapshot|ENOENT|not found/i,
   );
   assert.ok(fs.existsSync(REAL_DB));
+});
+
+test('legacy snapshot path resolves from SLABGRAPH_DATA_DIR or ./data at call time', async () => {
+  const { resolveLegacyDbPath, loadLegacySnapshot } = await legacyMod();
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), 'slabswarm-legacy-path-'));
+  const dataDir = path.join(tempDir, 'data');
+  const snapshotPath = path.join(dataDir, 'slabgraph-db.json');
+  try {
+    mkdirSync(dataDir);
+    writeFileSync(snapshotPath, JSON.stringify(smallSnapshot()), 'utf-8');
+
+    // Container-style absolute data dir via environment.
+    assert.equal(
+      resolveLegacyDbPath({ SLABGRAPH_DATA_DIR: dataDir }, tempDir),
+      snapshotPath,
+    );
+    assert.equal(
+      loadLegacySnapshot(resolveLegacyDbPath({ SLABGRAPH_DATA_DIR: dataDir }, tempDir)).assets.length,
+      1,
+      'a snapshot under SLABGRAPH_DATA_DIR must load',
+    );
+
+    // Default ./data is resolved against cwd at call time, never a host path.
+    assert.equal(resolveLegacyDbPath({}, tempDir), snapshotPath);
+    assert.equal(loadLegacySnapshot(resolveLegacyDbPath({}, tempDir)).sales.length, 2);
+
+    // Re-reading the environment at call time changes the answer.
+    assert.notEqual(
+      resolveLegacyDbPath({ SLABGRAPH_DATA_DIR: path.join(tempDir, 'other') }, tempDir),
+      snapshotPath,
+    );
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server source contains no hardcoded /opt paths', async () => {
+  const serverDir = path.resolve(
+    import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname),
+    '../../server',
+  );
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.ts') && statSync(full).isFile()
+        && readFileSync(full, 'utf-8').includes('/opt/slabswarm')) {
+        offenders.push(path.relative(serverDir, full));
+      }
+    }
+  };
+  walk(serverDir);
+  assert.deepEqual(offenders, [], `hardcoded host paths in server code: ${offenders.join(', ')}`);
 });

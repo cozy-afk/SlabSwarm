@@ -8,8 +8,8 @@ import { createCsvAdapter, previewCsv } from './adapters/csv.ts';
 import { createManualAdapter } from './adapters/manual.ts';
 import {
   createLegacyAdapter,
-  DEFAULT_LEGACY_DB,
   loadLegacySnapshot,
+  resolveLegacyDbPath,
   type LegacySnapshot,
 } from './adapters/legacy.ts';
 import { createTcgapisAdapter } from './adapters/tcgapis.ts';
@@ -17,8 +17,46 @@ import { promoteCandidates } from './promotion.ts';
 import { runIngest } from './runner.ts';
 import { createDurableRepositories } from './store.ts';
 import type { IngestRepositories } from './types.ts';
+import { envelope, errorEnvelope, newContext, UNKNOWN } from '../serving/catalog.ts';
 
 type Filters = Record<string, unknown>;
+
+/** Warnings that apply to every ingest response. No secret values are logged. */
+const INGEST_WARNINGS = [
+  'Raw evidence is immutable; corrections append.',
+  'Missing prices, shipping, fees, grade and condition stay UNKNOWN, never zero.',
+];
+
+function respond<T>(
+  res: Response,
+  status: number,
+  data: T,
+  legacy: Record<string, unknown> = {},
+): void {
+  res.status(status).json({
+    ...legacy,
+    ...envelope(data, newContext(), {
+      basis: UNKNOWN,
+      currency: UNKNOWN,
+      warnings: INGEST_WARNINGS,
+    }),
+  });
+}
+
+function respondError(
+  res: Response,
+  status: number,
+  error: string,
+  code: string,
+): void {
+  res.status(status).json({
+    ...errorEnvelope(error, code, newContext(), {
+      basis: UNKNOWN,
+      currency: UNKNOWN,
+      warnings: INGEST_WARNINGS,
+    }),
+  });
+}
 
 function filters(query: Request['query']): Filters {
   const out: Filters = {};
@@ -34,7 +72,7 @@ function filters(query: Request['query']): Filters {
 }
 
 function notFound(res: Response, label: string): void {
-  res.status(404).json({ error: `${label} not found` });
+  respondError(res, 404, `${label} not found`, 'not_found');
 }
 
 export function createIngestRouter(
@@ -44,7 +82,8 @@ export function createIngestRouter(
 ): Router {
   const router = Router();
   const registry = new AdapterRegistry([
-    createLegacyAdapter({ path: DEFAULT_LEGACY_DB }),
+    // No path captured here: the adapter resolves SLABGRAPH_DATA_DIR on each fetch.
+    createLegacyAdapter({}),
     createCsvAdapter(),
     createManualAdapter(),
     createTcgapisAdapter(),
@@ -52,69 +91,77 @@ export function createIngestRouter(
 
   // Evidence ---------------------------------------------------------------
   router.get('/api/evidence', async (req, res) => {
-    res.json({ evidence: await repos.evidence.list(filters(req.query)) });
+    const evidence = await repos.evidence.list(filters(req.query));
+    respond(res, 200, evidence, { evidence });
   });
 
   router.get('/api/evidence/:id', async (req, res) => {
     const record = await repos.evidence.get(req.params.id);
     if (!record) return notFound(res, 'evidence');
-    res.json({ evidence: record });
+    respond(res, 200, record, { evidence: record });
   });
 
   // Ingest runs ------------------------------------------------------------
   router.get('/api/ingest/runs', async (req, res) => {
-    res.json({ runs: await repos.runs.list(filters(req.query)) });
+    const runs = await repos.runs.list(filters(req.query));
+    respond(res, 200, runs, { runs });
   });
 
   router.get('/api/ingest/runs/:id', async (req, res) => {
     const run = await repos.runs.get(req.params.id);
     if (!run) return notFound(res, 'ingest run');
-    res.json({ run });
+    respond(res, 200, run, { run });
   });
 
   router.get('/api/ingest/adapters', (_req, res) => {
-    res.json({ adapters: registry.list().map((adapter) => adapter.id) });
+    const adapters = registry.list().map((adapter) => adapter.id);
+    respond(res, 200, adapters, { adapters });
   });
 
   // Manual notes -----------------------------------------------------------
   router.post('/api/ingest/manual', async (req, res) => {
     const note = req.body;
     if (note === null || typeof note !== 'object' || Array.isArray(note)) {
-      res.status(400).json({ error: 'note object is required' });
+      respondError(res, 400, 'note object is required', 'validation_error');
       return;
     }
     if (typeof note.text !== 'string' || note.text.trim() === '') {
-      res.status(400).json({ error: 'text is required' });
+      respondError(res, 400, 'text is required', 'validation_error');
       return;
     }
     const result = await runIngest(createManualAdapter(), repos, {
       mode: 'backfill',
       options: { note },
     });
-    res.json({ evidence: result.evidence, candidates: result.candidates, run: result.run });
+    const payload = { evidence: result.evidence, candidates: result.candidates, run: result.run };
+    respond(res, 200, payload, payload);
   });
 
   // CSV --------------------------------------------------------------------
   router.post('/api/ingest/csv', async (req, res) => {
     const csv = req.body?.csv;
     if (typeof csv !== 'string') {
-      res.status(400).json({ error: 'csv text is required' });
+      respondError(res, 400, 'csv text is required', 'validation_error');
       return;
     }
     if (req.body?.preview === true) {
-      res.json({ preview: previewCsv(csv) });
+      const preview = previewCsv(csv);
+      respond(res, 200, preview, { preview });
       return;
     }
     const result = await runIngest(createCsvAdapter(), repos, {
       mode: 'backfill',
       options: { csv },
     });
-    res.json({ evidence: result.evidence, candidates: result.candidates, run: result.run });
+    const payload = { evidence: result.evidence, candidates: result.candidates, run: result.run };
+    respond(res, 200, payload, payload);
   });
 
   // Deterministic candidate -> observation promotion -----------------------
   router.post('/api/ingest/promote', async (_req, res) => {
-    res.json(await promoteCandidates(repos));
+    const result = await promoteCandidates(repos);
+    const payload: Record<string, unknown> = { ...result };
+    respond(res, 200, payload, payload);
   });
 
   // Legacy graph harvest ---------------------------------------------------
@@ -126,12 +173,17 @@ export function createIngestRouter(
     } else {
       try {
         snapshot = loadLegacySnapshot(
-          typeof req.body?.snapshotPath === 'string' ? req.body.snapshotPath : DEFAULT_LEGACY_DB,
+          typeof req.body?.snapshotPath === 'string'
+            ? req.body.snapshotPath
+            : resolveLegacyDbPath(),
         );
       } catch (error) {
-        res.status(400).json({
-          error: error instanceof Error ? error.message : 'legacy snapshot unavailable',
-        });
+        respondError(
+          res,
+          400,
+          error instanceof Error ? error.message : 'legacy snapshot unavailable',
+          'legacy_snapshot_unavailable',
+        );
         return;
       }
     }
@@ -140,7 +192,8 @@ export function createIngestRouter(
       mode,
       options: {},
     });
-    res.json({ evidence: result.evidence, candidates: result.candidates, run: result.run });
+    const payload = { evidence: result.evidence, candidates: result.candidates, run: result.run };
+    respond(res, 200, payload, payload);
   });
 
   return router;

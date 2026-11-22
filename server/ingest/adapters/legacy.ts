@@ -5,6 +5,7 @@
 // become SOLD. Quarantined/zero-price sales carry UNKNOWN/null.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import type {
   AdapterFetchContext,
   AdapterFetchResult,
@@ -25,7 +26,21 @@ export interface LegacyAdapterOptions {
   loadSnapshot?: () => LegacySnapshot;
 }
 
-export const DEFAULT_LEGACY_DB = '/opt/slabswarm/data/slabgraph-db.json';
+const LEGACY_DB_FILENAME = 'slabgraph-db.json';
+
+/**
+ * Resolve the legacy snapshot at call time. SLABGRAPH_DATA_DIR is the
+ * container-friendly override (Docker sets it to /app/data); otherwise ./data
+ * is resolved against the current working directory. No host path is baked in.
+ */
+export function resolveLegacyDbPath(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  const configured = env.SLABGRAPH_DATA_DIR?.trim();
+  const dataDir = configured && configured.length > 0 ? configured : './data';
+  return path.resolve(cwd, dataDir, LEGACY_DB_FILENAME);
+}
 
 export function loadLegacySnapshot(path: string): LegacySnapshot {
   let raw: string;
@@ -73,7 +88,9 @@ export function createLegacyAdapter(options: LegacyAdapterOptions): IngestAdapte
   const resolveSnapshot = (): LegacySnapshot => {
     if (options.snapshot) return options.snapshot;
     if (options.loadSnapshot) return options.loadSnapshot();
-    return loadLegacySnapshot(options.path ?? DEFAULT_LEGACY_DB);
+    // Resolved inside fetch(), so a change to SLABGRAPH_DATA_DIR after router
+    // construction is picked up on the next request.
+    return loadLegacySnapshot(options.path ?? resolveLegacyDbPath());
   };
 
   return {

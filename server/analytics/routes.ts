@@ -22,6 +22,12 @@ import {
 } from './sqlLab.ts';
 import { getAnalyticsStore } from './store.ts';
 import type { AnalyticsStore, FindingFilters } from './types.ts';
+import {
+  envelope,
+  errorEnvelope,
+  newContext,
+  UNKNOWN,
+} from '../serving/catalog.ts';
 
 export interface AnalyticsRouteOptions {
   store?: AnalyticsStore;
@@ -38,6 +44,51 @@ function wrap(handler: AsyncHandler) {
       .then(() => handler(req, res))
       .catch(next);
   };
+}
+
+/** Warnings that apply to every derived intelligence response. */
+const ANALYTICS_WARNINGS = [
+  'Findings are deterministic, evidence-first derivations; they are not canonical facts and corrections append.',
+  'Basis is explicit; missing components stay UNKNOWN, never zero.',
+];
+
+/**
+ * Send a response with the shared { data, meta } contract. Legacy top-level
+ * fields (ok, findings, count, ...) are spread in first so old callers keep
+ * working while new callers read the envelope. No secret values are logged.
+ */
+function respond<T>(
+  res: Response,
+  status: number,
+  data: T,
+  legacy: Record<string, unknown> = {},
+): void {
+  res.status(status).json({
+    ...legacy,
+    ...envelope(data, newContext(), {
+      basis: UNKNOWN,
+      currency: UNKNOWN,
+      warnings: ANALYTICS_WARNINGS,
+    }),
+  });
+}
+
+function respondError(
+  res: Response,
+  status: number,
+  code: string,
+  message: string,
+): void {
+  res.status(status).json({
+    ok: false,
+    // Legacy callers read `error` as the machine code; keep that spelling.
+    message,
+    ...errorEnvelope(code, code, newContext(), {
+      basis: UNKNOWN,
+      currency: UNKNOWN,
+      warnings: ANALYTICS_WARNINGS,
+    }),
+  });
 }
 
 function optionalNumber(value: unknown, label: string, min: number, max: number): number | undefined {
@@ -80,13 +131,13 @@ export function mountAnalyticsRoutes(target: Router, options: AnalyticsRouteOpti
   // Admin-only at the integrator's discretion: export writes the derived lake.
   target.post('/api/admin/export-parquet', wrap(async (_req, res) => {
     const manifest = await exportAnalyticsParquet(store, { lakeDir: options.lakeDir });
-    res.status(200).json({ ok: true, ...manifest });
+    respond(res, 200, manifest, { ok: true, ...manifest });
   }));
 
   target.post('/api/intelligence/discovery-sweep', wrap((req, res) => {
     const sweepOptions = requestSweepOptions(req.body, options.sweepOptions);
     const result = runDiscoverySweep(store, sweepOptions);
-    res.status(200).json({ ok: true, ...result });
+    respond(res, 200, result, { ok: true, ...result });
   }));
 
   target.get('/api/intelligence/findings', wrap((req, res) => {
@@ -110,22 +161,25 @@ export function mountAnalyticsRoutes(target: Router, options: AnalyticsRouteOpti
       ...(typeof targetId === 'string' ? { targetId } : {}),
       ...(limit !== undefined ? { limit } : {}),
     });
-    res.status(200).json({ ok: true, findings, count: findings.length });
+    // UI reads data as the finding list; legacy callers read ok/findings/count.
+    respond(res, 200, findings, { ok: true, findings, count: findings.length });
   }));
 
   target.get('/api/sql/queries', wrap((_req, res) => {
-    res.status(200).json({ ok: true, queries: getBuiltInQueries() });
+    const queries = getBuiltInQueries();
+    respond(res, 200, queries, { ok: true, queries });
   }));
 
   target.post('/api/sql/query', wrap(async (req, res) => {
     const result = await runSqlQuery(store, {
       ...(req.body ?? {}) as Record<string, unknown>,
     });
-    res.status(200).json({ ok: true, result });
+    respond(res, 200, result, { ok: true, result });
   }));
 
   target.get('/api/sql/saved', wrap((_req, res) => {
-    res.status(200).json({ ok: true, queries: listSavedQueries(store) });
+    const queries = listSavedQueries(store);
+    respond(res, 200, queries, { ok: true, queries });
   }));
 
   target.post('/api/sql/saved', wrap((req, res) => {
@@ -135,37 +189,34 @@ export function mountAnalyticsRoutes(target: Router, options: AnalyticsRouteOpti
       sql: String(body.sql ?? ''),
       description: typeof body.description === 'string' ? body.description : null,
     });
-    res.status(201).json({ ok: true, query: saved });
+    respond(res, 201, saved, { ok: true, query: saved });
   }));
 
   target.delete('/api/sql/saved/:id', wrap((req, res) => {
     const deleted = store.deleteSavedQuery(req.params.id);
     if (!deleted) {
-      res.status(404).json({ ok: false, error: 'not_found', message: 'Saved query not found.' });
+      respondError(res, 404, 'not_found', 'Saved query not found.');
       return;
     }
-    res.status(200).json({ ok: true, deleted: true });
+    respond(res, 200, { deleted: true }, { ok: true, deleted: true });
   }));
 
   target.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (res.headersSent) return;
     if (error instanceof ReadOnlyViolation) {
-      res.status(403).json({ ok: false, error: 'read_only_violation', message: error.message });
+      respondError(res, 403, 'read_only_violation', error.message);
       return;
     }
     if (error instanceof ValidationError) {
-      res.status(400).json({ ok: false, error: 'validation_error', message: error.message });
+      respondError(res, 400, 'validation_error', error.message);
       return;
     }
     if (error instanceof QueryEngineError) {
-      res.status(503).json({ ok: false, error: 'query_engine_error', message: error.message });
+      respondError(res, 503, 'query_engine_error', error.message);
       return;
     }
-    res.status(500).json({
-      ok: false,
-      error: 'internal_error',
-      message: error instanceof Error ? error.message : String(error),
-    });
+    // Never echo raw exception text: it may contain connection strings or secrets.
+    respondError(res, 500, 'internal_error', 'Internal error.');
   });
 
   return target;

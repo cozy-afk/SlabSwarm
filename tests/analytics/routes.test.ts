@@ -131,3 +131,90 @@ test('malformed requests return 400 rather than a server error', async () => {
   assert.equal(bad.status, 400);
   assert.equal(bad.body.error, 'validation_error');
 });
+
+function assertEnvelope(body: Record<string, unknown>): Record<string, unknown> {
+  assert.ok('data' in body, 'response must carry a data field');
+  const meta = body.meta as Record<string, unknown> | undefined;
+  assert.ok(meta && typeof meta === 'object', 'response must carry a meta object');
+  assert.ok(typeof meta.requestId === 'string' && meta.requestId.length > 0, 'meta.requestId');
+  assert.ok(typeof meta.generatedAt === 'string' && !Number.isNaN(Date.parse(String(meta.generatedAt))), 'meta.generatedAt');
+  assert.equal(meta.contractVersion, '2026-11-22.1', 'meta.contractVersion');
+  assert.equal(meta.correctionPolicy, 'APPEND_ONLY', 'meta.correctionPolicy');
+  assert.ok(Array.isArray(meta.warnings), 'meta.warnings must be an array');
+  return meta;
+}
+
+test('intelligence responses carry { data, meta } alongside legacy ok/findings fields', async () => {
+  const sweep = await jsonRequest('/api/intelligence/discovery-sweep', {
+    method: 'POST', body: '{}',
+  });
+  assert.equal(sweep.status, 200);
+  const sweepMeta = assertEnvelope(sweep.body);
+  assert.equal(sweep.body.ok, true, 'legacy ok field must remain');
+  assert.ok(Array.isArray(sweep.body.findings), 'legacy findings field must remain');
+  const sweepData = sweep.body.data as { findings?: unknown[] } | undefined;
+  assert.ok(sweepData && Array.isArray(sweepData.findings), 'data must carry the sweep result');
+
+  const listed = await jsonRequest('/api/intelligence/findings');
+  assert.equal(listed.status, 200);
+  const listMeta = assertEnvelope(listed.body);
+  assert.equal(listed.body.ok, true, 'legacy ok field must remain');
+  assert.ok(Array.isArray(listed.body.findings), 'legacy findings field must remain');
+  assert.deepEqual(listed.body.data, listed.body.findings, 'UI reads data as the findings array');
+  assert.equal(listed.body.count, (listed.body.findings as unknown[]).length);
+  assert.notEqual(sweepMeta.requestId, listMeta.requestId, 'each response gets its own requestId');
+});
+
+test('every analytics route and error response uses the shared envelope', async () => {
+  for (const route of [
+    '/api/sql/queries',
+    '/api/sql/saved',
+    '/api/intelligence/findings?type=MOMENTUM',
+  ]) {
+    const { status, body } = await jsonRequest(route);
+    assert.equal(status, 200, route);
+    assertEnvelope(body);
+  }
+
+  const exported = await jsonRequest('/api/admin/export-parquet', { method: 'POST', body: '{}' });
+  assert.equal(exported.status, 200);
+  assertEnvelope(exported.body);
+
+  for (const bad of [
+    { method: 'POST', body: JSON.stringify({ staleDays: -1 }) },
+  ]) {
+    const res = await jsonRequest('/api/intelligence/discovery-sweep', bad);
+    assert.equal(res.status, 400);
+    const meta = assertEnvelope(res.body);
+    assert.equal(res.body.data, null, 'errors use a null data field');
+    assert.equal(res.body.code, 'validation_error');
+    assert.ok(Array.isArray(meta.warnings));
+  }
+
+  const forbidden = await jsonRequest('/api/sql/query', {
+    method: 'POST', body: JSON.stringify({ sql: 'DROP TABLE observations' }),
+  });
+  assert.equal(forbidden.status, 403);
+  assert.equal(forbidden.body.data, null);
+  assertEnvelope(forbidden.body);
+});
+
+test('analytics responses never echo environment secret values', async () => {
+  const key = 'SLABSWARM_RESPONSE_CANARY';
+  const canary = 'canary-do-not-leak-9f3a';
+  const original = process.env[key];
+  process.env[key] = canary;
+  try {
+    for (const route of ['/api/intelligence/findings', '/api/sql/queries']) {
+      const { body } = await jsonRequest(route);
+      assert.equal(JSON.stringify(body).includes(canary), false, `${route} leaked an environment value`);
+    }
+    const bad = await jsonRequest('/api/intelligence/discovery-sweep', {
+      method: 'POST', body: JSON.stringify({ staleDays: -1 }),
+    });
+    assert.equal(JSON.stringify(bad.body).includes(canary), false, 'error response leaked an environment value');
+  } finally {
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
+  }
+});
