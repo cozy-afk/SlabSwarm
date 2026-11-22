@@ -34,6 +34,7 @@ import type {
   AlertRule,
   GradeLabel,
   LLMProviderId,
+  MarketBasis,
   MarketplaceId,
   MarketSegment,
   SwarmRunRecord,
@@ -73,7 +74,11 @@ const operatorAuth = createOperatorAuthManager(
   (hash) => graphEngine.setAdminPasscodeHash(hash)
 );
 
-async function startServer() {
+// Build the Express application with all routes. Exported so API tests can
+// drive real handlers over an ephemeral port without auto-starting a listener.
+// When SLABGRAPH_TEST_MODE is set, Vite dev middleware and static hosting are
+// skipped (the API is all tests need) so no long-lived watcher keeps Node alive.
+export async function createApp() {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
 
@@ -136,6 +141,83 @@ async function startServer() {
   app.get('/api/graph/state', (req, res) => {
     const includeFees = req.query.includeFees !== 'false';
     res.json(graphEngine.getState(includeFees));
+  });
+
+  // --- First-party research source ingest & state (Task 3) ---
+  const RESEARCH_SOURCE_TYPES = new Set([
+    'USER_NOTE',
+    'RAW_LISTING',
+    'CSV_IMPORT',
+    'SCREENSHOT',
+    'NEWS',
+    'EVENT',
+    'PACK_PULL',
+    'POPULATION_REPORT',
+    'API_RESULT',
+  ]);
+  const MARKET_BASES = new Set([
+    'SOLD',
+    'ASKING',
+    'OFFER',
+    'GUIDE',
+    'CLAIM',
+    'POPULATION',
+    'UNKNOWN',
+  ]);
+
+  app.post('/api/research/source', operatorAuth.requireAuth, (req, res) => {
+    const { type, title, rawText, tags, basis, tenantId, raw_payload, checksum_sha256, source_url } =
+      req.body ?? {};
+
+    if (!type || !RESEARCH_SOURCE_TYPES.has(type)) {
+      res.status(400).json({
+        error:
+          'A valid research source type is required (USER_NOTE, RAW_LISTING, CSV_IMPORT, SCREENSHOT, NEWS, EVENT, PACK_PULL, POPULATION_REPORT, API_RESULT).',
+      });
+      return;
+    }
+    if (typeof title !== 'string' || title.trim() === '') {
+      res.status(400).json({ error: 'A non-empty title is required.' });
+      return;
+    }
+    if (typeof rawText !== 'string' || rawText.trim() === '') {
+      res.status(400).json({ error: 'Non-empty rawText is required.' });
+      return;
+    }
+    if (tags !== undefined && !Array.isArray(tags)) {
+      res.status(400).json({ error: 'tags must be an array of strings.' });
+      return;
+    }
+    if (basis !== undefined && !MARKET_BASES.has(basis)) {
+      res.status(400).json({ error: 'Invalid basis. Basis must be a first-party market basis or UNKNOWN.' });
+      return;
+    }
+
+    try {
+      const source = graphEngine.addResearchSource({
+        type,
+        title: title.trim(),
+        rawText,
+        tags: tags as string[] | undefined,
+        basis: basis as MarketBasis | undefined,
+        tenantId,
+        raw_payload,
+        checksum_sha256,
+        source_url,
+      });
+      res.status(201).json({
+        source,
+        state: graphEngine.getResearchState(),
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to ingest research source.',
+      });
+    }
+  });
+
+  app.get('/api/research/state', operatorAuth.requireAuth, (_req, res) => {
+    res.json(graphEngine.getResearchState());
   });
 
   app.get('/api/blueprint', (_req, res) => {
@@ -1442,16 +1524,21 @@ async function startServer() {
   });
 
   // --- Vite Dev Middleware / Production Static Hosting ---
+  // Tests import createApp() and set SLABGRAPH_TEST_MODE so no dev watcher or
+  // static host is attached (neither is needed to exercise the API).
+  const testMode = process.env.SLABGRAPH_TEST_MODE === '1';
   const distPath = path.resolve(__dirname, 'dist');
   const isProd =
-    process.env.NODE_ENV === 'production' && fs.existsSync(distPath);
+    !testMode &&
+    process.env.NODE_ENV === 'production' &&
+    fs.existsSync(distPath);
 
   if (isProd) {
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
-  } else {
+  } else if (!testMode) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1460,14 +1547,26 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
+  return app;
+}
+
+async function startServer() {
+  const app = await createApp();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `SlabGraph self-hosted server (${isProd ? 'production' : 'development'}) listening on http://0.0.0.0:${PORT}`
+      `SlabGraph self-hosted server (${process.env.NODE_ENV === 'production' ? 'production' : 'development'}) listening on http://0.0.0.0:${PORT}`
     );
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start SlabGraph server:', err);
-  process.exit(1);
-});
+// Auto-start only when invoked directly (node server.ts / tsx server.ts).
+// Importing this module from a test must not bind a port or start Vite.
+const isMainModule =
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) {
+  startServer().catch((err) => {
+    console.error('Failed to start SlabGraph server:', err);
+    process.exit(1);
+  });
+}

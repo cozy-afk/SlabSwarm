@@ -24,6 +24,8 @@ import type {
   SubjectNode,
   SwarmRunRecord,
   TriggeredAlert,
+  ResearchSourceNode,
+  MarketBasis,
 } from '../src/types/graph.ts';
 import { getAlertChannelStatus } from './alertDispatcher.ts';
 import {
@@ -1545,6 +1547,78 @@ export async function pushListingToSlabGraph(listing: {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }`;
+  }
+
+  // --- First-party research source ingest (Task 3) ------------------------
+  // Additive methods backed by Task 2 collections. Raw source text is stored
+  // immutably; a basis is never inferred from content (UNKNOWN means not supplied).
+  public addResearchSource(input: {
+    type: ResearchSourceNode['type'];
+    title: string;
+    rawText: string;
+    tags?: string[];
+    basis?: MarketBasis;
+    tenantId?: string;
+    raw_payload?: Record<string, unknown>;
+    checksum_sha256?: string | null;
+    source_url?: string | null;
+  }): ResearchSourceNode {
+    const source: ResearchSourceNode = {
+      id: `src-${randomUUID()}`,
+      type: input.type,
+      title: input.title,
+      rawText: input.rawText,
+      tags: input.tags ?? [],
+      // Basis is required on the schema; UNKNOWN is an explicit sentinel for
+      // "not supplied", never a silent promotion to SOLD/ASKING/GUIDE.
+      basis: input.basis ?? 'UNKNOWN',
+      capturedAt: new Date().toISOString(),
+      tenantId: input.tenantId,
+      raw_payload: input.raw_payload,
+      checksum_sha256: input.checksum_sha256 ?? null,
+      source_url: input.source_url ?? null,
+    };
+    this.db.researchSources.push(source);
+    this.persist();
+    return source;
+  }
+
+  public getResearchState(): {
+    researchSources: ResearchSourceNode[];
+    researchObservations: PersistedGraphDatabase['researchObservations'];
+    researchNotes: PersistedGraphDatabase['researchNotes'];
+    researchProjections: PersistedGraphDatabase['researchProjections'];
+    mediaAssets: PersistedGraphDatabase['mediaAssets'];
+    marketObservations: PersistedGraphDatabase['marketObservations'];
+    identityDecisions: PersistedGraphDatabase['identityDecisions'];
+    counts: {
+      researchSources: number;
+      researchObservations: number;
+      researchNotes: number;
+      researchProjections: number;
+      mediaAssets: number;
+      marketObservations: number;
+      identityDecisions: number;
+    };
+  } {
+    return {
+      researchSources: this.db.researchSources,
+      researchObservations: this.db.researchObservations,
+      researchNotes: this.db.researchNotes,
+      researchProjections: this.db.researchProjections,
+      mediaAssets: this.db.mediaAssets,
+      marketObservations: this.db.marketObservations,
+      identityDecisions: this.db.identityDecisions,
+      counts: {
+        researchSources: this.db.researchSources.length,
+        researchObservations: this.db.researchObservations.length,
+        researchNotes: this.db.researchNotes.length,
+        researchProjections: this.db.researchProjections.length,
+        mediaAssets: this.db.mediaAssets.length,
+        marketObservations: this.db.marketObservations.length,
+        identityDecisions: this.db.identityDecisions.length,
+      },
+    };
   }
 
   public getState(includeFees = true): GraphStatePayload {
