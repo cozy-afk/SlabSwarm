@@ -29,6 +29,7 @@ import {
   clearProviderCredentials,
   setProviderCredentials,
 } from './server/llmSettings.ts';
+import { getMediaAsset, storeMediaAsset } from './server/mediaStore.ts';
 import { indexMissingNodes, searchSemanticNodes } from './server/vectorIndex.ts';
 import type {
   AlertRule,
@@ -37,6 +38,7 @@ import type {
   MarketBasis,
   MarketplaceId,
   MarketSegment,
+  MediaKind,
   SwarmRunRecord,
   SwarmStepTrace,
 } from './src/types/graph.ts';
@@ -218,6 +220,128 @@ export async function createApp() {
 
   app.get('/api/research/state', operatorAuth.requireAuth, (_req, res) => {
     res.json(graphEngine.getResearchState());
+  });
+
+  // --- First-party media evidence ingest / retrieval (Task 5) -------------
+  // Raw bytes are immutable; all derived OCR/recognition data is attached to
+  // the record. License metadata is mandatory for commercial use.
+  const MEDIA_KINDS = new Set<MediaKind>([
+    'CARD_FRONT',
+    'CARD_BACK',
+    'SLAB_LABEL',
+    'PACK',
+    'BOX',
+    'SELLER_PHOTO',
+    'SCREENSHOT',
+    'OCR_IMAGE',
+  ]);
+
+  app.post('/api/media/ingest', operatorAuth.requireAuth, (req, res) => {
+    const body = req.body ?? {};
+    const {
+      kind,
+      bytesBase64,
+      uri,
+      checksumSha256,
+      mimeType,
+      width,
+      height,
+      license,
+      attribution,
+      sourceUrl,
+      sourceTerms,
+      usageRights,
+      observedAt,
+      capturedAt,
+      tenantId,
+      sourceId,
+      sourceRecordId,
+      targetType,
+      targetId,
+      ocrText,
+      recognitionCandidates,
+      recognitionConfidence,
+      parserVersion,
+      visibleFacets,
+    } = body;
+
+    if (!MEDIA_KINDS.has(kind)) {
+      res.status(400).json({
+        error:
+          'A valid media kind is required (CARD_FRONT, CARD_BACK, SLAB_LABEL, PACK, BOX, SELLER_PHOTO, SCREENSHOT, OCR_IMAGE).',
+      });
+      return;
+    }
+    if (typeof license !== 'string' || license.trim() === '') {
+      res.status(400).json({ error: 'License metadata is required for commercial use.' });
+      return;
+    }
+    if (typeof mimeType !== 'string' || mimeType.trim() === '') {
+      res.status(400).json({ error: 'A non-empty mimeType is required.' });
+      return;
+    }
+    if (bytesBase64 === undefined && uri === undefined) {
+      res.status(400).json({ error: 'Either bytesBase64 or uri is required.' });
+      return;
+    }
+    if (bytesBase64 !== undefined && typeof bytesBase64 !== 'string') {
+      res.status(400).json({ error: 'bytesBase64 must be a base64-encoded string.' });
+      return;
+    }
+
+    let bytes: Buffer | undefined;
+    if (bytesBase64 !== undefined) {
+      try {
+        bytes = Buffer.from(bytesBase64, 'base64');
+        if (bytes.length === 0) throw new Error('empty payload');
+      } catch {
+        res.status(400).json({ error: 'bytesBase64 is not valid base64 image data.' });
+        return;
+      }
+    }
+
+    try {
+      const media = storeMediaAsset({
+        kind,
+        bytes,
+        uri,
+        checksumSha256,
+        mimeType,
+        width,
+        height,
+        license,
+        attribution,
+        sourceUrl,
+        sourceTerms,
+        usageRights,
+        observedAt: observedAt ?? new Date().toISOString(),
+        capturedAt,
+        tenantId,
+        sourceId,
+        sourceRecordId,
+        targetType,
+        targetId,
+        ocrText,
+        recognitionCandidates,
+        recognitionConfidence,
+        parserVersion,
+        visibleFacets,
+      });
+      res.status(201).json({ media });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to ingest media asset.',
+      });
+    }
+  });
+
+  app.get('/api/media/:id', operatorAuth.requireAuth, (req, res) => {
+    const media = getMediaAsset(req.params.id);
+    if (!media) {
+      res.status(404).json({ error: 'Media asset not found.' });
+      return;
+    }
+    res.json({ media });
   });
 
   app.get('/api/blueprint', (_req, res) => {

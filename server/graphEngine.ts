@@ -26,6 +26,7 @@ import type {
   TriggeredAlert,
   ResearchSourceNode,
   MarketBasis,
+  MediaAssetNode,
 } from '../src/types/graph.ts';
 import { getAlertChannelStatus } from './alertDispatcher.ts';
 import {
@@ -1619,6 +1620,39 @@ export async function pushListingToSlabGraph(listing: {
         identityDecisions: this.db.identityDecisions.length,
       },
     };
+  }
+
+  // --- First-party media asset store (Task 5) -----------------------------
+  // Additive methods backing Task 2's mediaAssets collection. Raw bytes are
+  // stored separately by mediaStore.ts; this engine only owns the records.
+
+  /** Insert a media record. Dedupe is enforced by the caller's checksum. */
+  public addMediaAsset(asset: MediaAssetNode): MediaAssetNode {
+    this.db.mediaAssets.push(asset);
+    this.persist();
+    return asset;
+  }
+
+  /** Look up a media record by id without exposing the whole database. */
+  public getMediaAssetById(id: string): MediaAssetNode | undefined {
+    return this.db.mediaAssets.find((a) => a.id === id);
+  }
+
+  /** Look up a media record by checksum for deterministic dedupe. */
+  public getMediaAssetByChecksum(checksum: string): MediaAssetNode | undefined {
+    return this.db.mediaAssets.find((a) => a.checksum_sha256 === checksum);
+  }
+
+  /** Patch derived OCR/recognition fields onto an existing record. */
+  public updateMediaAssetDerived(
+    id: string,
+    patch: Partial<MediaAssetNode>,
+  ): MediaAssetNode | undefined {
+    const asset = this.db.mediaAssets.find((a) => a.id === id);
+    if (!asset) return undefined;
+    Object.assign(asset, patch);
+    this.persist();
+    return asset;
   }
 
   public getState(includeFees = true): GraphStatePayload {
