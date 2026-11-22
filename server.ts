@@ -10,6 +10,10 @@ import {
 import { createOperatorAuthManager } from './server/auth.ts';
 import { graphEngine } from './server/graphEngine.ts';
 import {
+  groundGraphRagAnswer,
+  type GraphRagEvidenceFact,
+} from './server/graphRagGuardrails.ts';
+import {
   HERMES_TOOL_DEFINITIONS,
   dispatchHermesWebhook,
   executeHermesTool,
@@ -239,10 +243,11 @@ export async function createApp() {
     try {
       const state = graphEngine.getResearchState();
       const evidenceIds: string[] = [];
-      const evidenceFacts: Array<{ id: string; kind: string; detail: string }> = [];
+      const evidenceFacts: GraphRagEvidenceFact[] = [];
 
       // Deterministic facts authority: only first-party collections are
       // eligible evidence. No external or fabricated numbers enter here.
+      // Task 7: graph facts + research observations are the grounding set.
       for (const source of state.researchSources) {
         evidenceIds.push(source.id);
         evidenceFacts.push({
@@ -268,6 +273,26 @@ export async function createApp() {
         });
       }
 
+      // Task 7: deterministic graph facts are grounding evidence too. Market
+      // observations carry an explicit basis and amount emitted by the graph
+      // engine — never computed or invented by the model. They are the only
+      // priced facts eligible to back a numeric price in a grounded answer.
+      for (const observation of state.marketObservations) {
+        evidenceIds.push(observation.id);
+        // Canonical USD price token so the deterministic verifier can back a
+        // grounded answer that cites this real market observation ($amount).
+        // Non-USD amounts stay currency-labelled and are never treated as USD.
+        const priceToken =
+          observation.currency?.toUpperCase() === 'USD'
+            ? `$${Number(observation.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : `${observation.currency} ${observation.amount}`;
+        evidenceFacts.push({
+          id: observation.id,
+          kind: 'marketObservation',
+          detail: `MARKET ${observation.basis} · ${priceToken} · qty=${observation.quantity} · marketplace=${observation.marketplace}`,
+        });
+      }
+
       // Deterministic subquestion decomposition — never invented by the LLM.
       const subquestions: string[] = [
         `What first-party evidence is available for: ${cleanQuestion}?`,
@@ -275,12 +300,34 @@ export async function createApp() {
         'What evidence is still missing to answer with confidence?',
       ];
 
+      const hasProvider = getAvailableProviders().some((p) => p.configured);
+      const hasKnownBasis =
+        state.researchSources.some((s) => s.basis !== 'UNKNOWN') ||
+        state.marketObservations.some((o) => o.basis !== 'UNKNOWN');
+
+      // Task 7: the GraphRAG system instruction now makes deterministic
+      // evidence the sole authority. Prices/numbers may only be repeated from
+      // the supplied facts, every claim needs an [evidenceId] citation, and
+      // unsupported questions must be deflected — never answered by guesswork.
+      const graphRagSystemInstruction = [
+        'You are the Question-First Research Agent for SlabGraph, a deterministic GraphRAG terminal.',
+        'GROUNDING RULES (absolute):',
+        '- Answer ONLY from the first-party evidence facts supplied. They are authoritative; you may reorganize them but never add, invent, estimate, or recalculate prices, dates, grades, counts, or confidence.',
+        '- Never output a numeric price unless that exact value appears in a supplied evidence fact. No made-up dollar amounts, comps, or market values.',
+        '- Cite the evidence id in square brackets for every claim, e.g. [src-123]. An answer without at least one citation is not grounded.',
+        '- Basis is never defaulted: SOLD, ASKING, GUIDE, and CLAIM are distinct. Treat basis=UNKNOWN as UNKNOWN.',
+        '- Missing data stays UNKNOWN. Do not fill gaps with plausible-sounding numbers or assumptions.',
+        '- DEFLECTION: if the evidence is insufficient, empty, or does not support the question, reply with a synthesis that explicitly begins "Insufficient evidence" and states what is missing. Never bluff a confident answer.',
+        '- Confidence is a deterministic cap, not a free choice: without a known market basis use LOW; never claim HIGH on your own authority.',
+        'Return JSON with: synthesis (string), confidence (LOW/MEDIUM/HIGH), subquestions (array of strings).',
+      ].join('\n');
+
       const missingData: string[] = [];
       if (evidenceIds.length === 0) {
         missingData.push('No first-party research sources, observations, or media evidence are available.');
       }
-      if (state.researchSources.every((s) => s.basis === 'UNKNOWN')) {
-        missingData.push('No source with a known market basis (SOLD / ASKING / GUIDE) is available.');
+      if (!hasKnownBasis) {
+        missingData.push('No source with a known market basis (SOLD / ASKING / GUIDE / CLAIM) is available.');
       }
       missingData.push('No verified price comps are attached to this question.');
 
@@ -288,10 +335,8 @@ export async function createApp() {
         ? evidenceFacts.map((f) => `- [${f.id}] ${f.detail}`).join('\n')
         : '(none — no first-party evidence is available)';
 
-      const hasProvider = getAvailableProviders().some((p) => p.configured);
-      let synthesis: string;
-      let confidence = 0.2; // LOW by default; deterministic authority caps it.
-      let confidenceLabel: 'LOW' | 'MEDIUM' = 'LOW';
+      let draftSynthesis = '';
+      let requestedConfidence = '';
       let evidenceMode = 'deterministic_fallback';
       let providerUsed: string | undefined;
 
@@ -304,48 +349,60 @@ export async function createApp() {
           }>({
             role: 'graphRagSynthesis',
             providerOverride: providerOverride as LLMProviderId | undefined,
-            systemInstruction:
-              'You are the Question-First Research Agent. Answer ONLY from the deterministic first-party evidence supplied. Never invent, estimate, or recalculate prices, dates, grades, or counts. If the evidence does not support a claim, say so explicitly. Cite evidence ids in brackets. Return JSON with: synthesis (string), confidence (LOW/MEDIUM/HIGH), subquestions (array of strings).',
+            systemInstruction: graphRagSystemInstruction,
             prompt: `Research Question: ${cleanQuestion}\n\nSubquestions:\n${subquestions.map((s) => `- ${s}`).join('\n')}\n\nFirst-party evidence (authoritative):\n${evidenceText}\n\nKnown missing data:\n${missingData.map((m) => `- ${m}`).join('\n')}`,
             jsonSchema: {
-              synthesis: { type: 'STRING', description: 'Evidence-grounded synthesis. No invented numbers.' },
-              confidence: { type: 'STRING', description: 'LOW, MEDIUM, or HIGH; must not exceed what the evidence supports.' },
+              synthesis: { type: 'STRING', description: 'Evidence-grounded synthesis. No invented numbers. Every claim cites an [evidenceId].' },
+              confidence: { type: 'STRING', description: 'LOW, MEDIUM, or HIGH; deterministic evidence caps this, never HIGH without known basis.' },
               subquestions: { type: 'ARRAY', itemsType: 'STRING', description: 'Subquestions answered.' },
             },
           });
           const data = synthesized.data;
-          // A provider may only speak when there is first-party evidence to
-          // ground it; unsupported claims fall back to insufficient evidence,
-          // never to an invented number.
-          if (typeof data?.synthesis === 'string' && data.synthesis.trim() && evidenceIds.length > 0) {
-            synthesis = data.synthesis.trim();
-            // Deterministic authority caps the model's confidence: with no
-            // evidence or no known basis it can never exceed LOW.
-            const requested = String(data.confidence || '').toUpperCase();
-            const hasKnownBasis = state.researchSources.some((s) => s.basis !== 'UNKNOWN');
-            if (hasKnownBasis && (requested === 'MEDIUM' || requested === 'HIGH')) {
-              confidence = 0.6;
-              confidenceLabel = 'MEDIUM';
-            }
-            if (Array.isArray(data.subquestions) && data.subquestions.length > 0) {
-              subquestions.splice(0, subquestions.length, ...data.subquestions.filter((q) => typeof q === 'string'));
-            }
-            evidenceMode = 'swarm_provider';
-            providerUsed = `${synthesized.providerLabel} (${synthesized.model})`;
-          } else {
-            synthesis = 'Insufficient evidence: no first-party evidence supports a grounded answer; no values are inferred.';
+          if (typeof data?.synthesis === 'string') {
+            draftSynthesis = data.synthesis.trim();
+            requestedConfidence = String(data.confidence || '');
           }
+          if (Array.isArray(data?.subquestions) && data.subquestions.length > 0) {
+            subquestions.splice(0, subquestions.length, ...data.subquestions.filter((q) => typeof q === 'string'));
+          }
+          evidenceMode = 'swarm_provider';
+          providerUsed = `${synthesized.providerLabel} (${synthesized.model})`;
         } catch {
-          synthesis = 'Insufficient evidence: the research provider was unavailable; the deterministic fallback was used.';
+          // Provider unavailable: deterministic fallback below.
+          draftSynthesis = '';
+          requestedConfidence = '';
         }
-      } else {
-        synthesis =
-          evidenceIds.length === 0
-            ? 'Insufficient evidence: no first-party sources, observations, or media are available to answer this question. No values are inferred.'
-            : 'Insufficient evidence: first-party evidence was found but no Swarm provider is configured to synthesize it; values are not inferred.';
       }
 
-      if (missingData.length === 0) missingData.push('Unspecified evidence gaps.');
+      // Task 7: run the provider draft through the deterministic guardrail.
+      // This is the last word on grounding — deterministic facts are authority
+      // over the model, so an uncited or invented price is deflected here even
+      // if the provider ignored its system instruction.
+      const grounded = groundGraphRagAnswer({
+        question: cleanQuestion,
+        draftSynthesis,
+        evidenceFacts,
+        evidenceIds,
+        knownBasis: hasKnownBasis,
+        requestedConfidence,
+      });
+      const synthesis = grounded.synthesis;
+
+      // ResearchNoteNode.confidence stays numeric (Task 1 schema). Map the
+      // grounded band to a conservative numeric value; UNKNOWN and LOW are
+      // both 0.2 so missing evidence is never treated as a factual value.
+      const confidenceByBand: Record<string, number> = {
+        UNKNOWN: 0.2,
+        LOW: 0.2,
+        MEDIUM: 0.6,
+        HIGH: 0.8,
+      };
+      const confidence = confidenceByBand[grounded.confidence] ?? 0.2;
+      const confidenceLabel = grounded.confidence;
+
+      const finalMissingData = grounded.missingData.length
+        ? grounded.missingData
+        : ['Unspecified evidence gaps.'];
 
       const note = graphEngine.addResearchNote({
         question: cleanQuestion,
@@ -353,11 +410,15 @@ export async function createApp() {
         evidenceIds,
         synthesis,
         confidence,
-        missingData,
+        missingData: finalMissingData,
       });
       res.status(201).json({
         note,
+        confidence,
         confidenceLabel,
+        missingData: finalMissingData,
+        deflected: grounded.deflected,
+        citations: grounded.citations,
         evidenceMode,
         ...(providerUsed ? { providerUsed } : {}),
         evidenceFacts,
