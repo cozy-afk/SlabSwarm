@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 2,
+  "assets": [
+    {
+      "id": "asset-1",
+      "title": "Charizard 1st Edition",
+      "segment": "vintage_holo",
+      "franchise": "pokemon",
+      "setId": "base",
+      "setName": "Base Set",
+      "releaseYear": 1999,
+      "cardNumber": "4",
+      "variant": "1st Edition",
+      "grades": []
+    },
+    {
+      "id": "asset-2",
+      "title": "Blastoise",
+      "segment": "vintage_holo",
+      "franchise": "pokemon",
+      "setId": "base",
+      "setName": "Base Set",
+      "releaseYear": 1999,
+      "cardNumber": "2",
+      "variant": "Unlimited",
+      "grades": []
+    },
+    { "title": "No identifier asset" }
+  ],
+  "sales": [
+    {
+      "id": "sale-1",
+      "assetId": "asset-1",
+      "rawTitle": "Charizard PSA 10 sold",
+      "grade": "PSA 10",
+      "priceUsd": 12500,
+      "marketplaceId": "ebay",
+      "date": "2026-10-01",
+      "status": "VERIFIED"
+    },
+    {
+      "id": "sale-2",
+      "assetId": "asset-2",
+      "rawTitle": "Blastoise sold",
+      "priceUsd": 4200,
+      "marketplaceId": "ebay",
+      "date": "2026-10-02",
+      "status": "QUARANTINED"
+    },
+    { "id": "sale-bad", "assetId": "asset-1", "priceUsd": "not-a-number", "date": "2026-10-03" }
+  ],
+  "valuations": {
+    "asset-1": {
+      "assetId": "asset-1",
+      "topGradeLabel": "PSA 10",
+      "topGradeAvg": 12500,
+      "movingAvg30d": 11900,
+      "history": [{ "date": "2026-10-01", "psa10": 12500 }]
+    }
+  },
+  "researchSources": [
+    {
+      "id": "source-1",
+      "type": "USER_NOTE",
+      "title": "Seller claim",
+      "rawText": "Seller states reverse holo.",
+      "tags": ["holo"],
+      "basis": "CLAIM",
+      "capturedAt": "2026-10-05T00:00:00.000Z"
+    },
+    { "title": "Source without id" }
+  ],
+  "researchNotes": [
+    {
+      "id": "note-1",
+      "question": "Is this a genuine 1st Edition?",
+      "subquestions": ["Check print date"],
+      "evidenceIds": ["source-1"],
+      "synthesis": "Evidence supports the claim.",
+      "confidence": 0.7,
+      "missingData": ["certificate number"],
+      "createdAt": "2026-10-06T00:00:00.000Z"
+    },
+    { "question": "Note without id" }
+  ],
+  "marketObservations": [
+    {
+      "id": "obs-1",
+      "evidenceId": "sale-1",
+      "targetIdentityRef": "asset-1",
+      "basis": "SOLD",
+      "amount": 12500,
+      "currency": "USD",
+      "observedAt": "2026-10-01T00:00:00.000Z",
+      "priceComponents": { "listed_amount": 12500 }
+    },
+    {
+      "id": "obs-2",
+      "evidenceId": "unknown",
+      "targetIdentityRef": "asset-1",
+      "basis": "MADE_UP",
+      "amount": 10,
+      "currency": "USD",
+      "observedAt": "2026-10-02T00:00:00.000Z"
+    }
+  ]
+}
