@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import {
+  Activity,
   BarChart3,
   Bot,
   Database,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { ApiHermesView } from './components/product/ApiHermesView.tsx';
+import { ActiveReportView } from './components/product/ActiveReportView.tsx';
 import { CatalogView } from './components/product/CatalogView.tsx';
 import { ForecastLabView } from './components/product/ForecastLabView.tsx';
 import { LearningView } from './components/product/LearningView.tsx';
@@ -28,6 +30,7 @@ type ActiveTab =
   | 'sources'
   | 'catalog'
   | 'intelligence'
+  | 'active-report'
   | 'swarm'
   | 'forecast'
   | 'learning'
@@ -57,6 +60,12 @@ const NAV_ITEMS: Array<{
     label: 'Market Intelligence',
     sublabel: 'Findings & Comps',
     icon: TrendingUp,
+  },
+  {
+    id: 'active-report',
+    label: 'Active Report',
+    sublabel: 'Evidence-Backed Trading',
+    icon: Activity,
   },
   {
     id: 'swarm',
@@ -128,6 +137,8 @@ export default function App() {
         return <CatalogView />;
       case 'intelligence':
         return <MarketIntelligenceView />;
+      case 'active-report':
+        return <ActiveReportView />;
       case 'swarm':
         return <ResearchSwarmView />;
       case 'forecast':
