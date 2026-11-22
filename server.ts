@@ -34,6 +34,13 @@ import {
   setProviderCredentials,
 } from './server/llmSettings.ts';
 import { getMediaAsset, isValidSha256Hex, storeMediaAsset } from './server/mediaStore.ts';
+import {
+  ValidationError,
+  addMarketObservation,
+  getMarketObservation,
+  listMarketObservations,
+  type MarketObservationFilters,
+} from './server/marketObservations.ts';
 import { indexMissingNodes, searchSemanticNodes } from './server/vectorIndex.ts';
 import type {
   AlertRule,
@@ -279,6 +286,50 @@ export async function createApp() {
 
   app.get('/api/research/state', operatorAuth.requireAuth, (_req, res) => {
     res.json(graphEngine.getResearchState());
+  });
+
+  // --- First-party market observation API (Task 1) -----------------------
+  // Append-only write path plus list/get reads. Basis is required and never
+  // defaulted; missing shipping/fees/currency stay UNKNOWN. Validation errors
+  // surface as 400 rather than 500.
+  app.post('/api/market/observations', operatorAuth.requireAuth, (req, res) => {
+    try {
+      const observation = addMarketObservation(req.body);
+      res.status(201).json({ observation });
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to add market observation.',
+      });
+    }
+  });
+
+  app.get('/api/market/observations', operatorAuth.requireAuth, (req, res) => {
+    const allowed = new Set([
+      'tenantId', 'targetIdentityRef', 'basis', 'status',
+      'sourceId', 'nativeSourceRecordId', 'marketplace', 'currency',
+    ]);
+    const filters: Record<string, string> = {};
+    for (const [key, value] of Object.entries(req.query)) {
+      if (!allowed.has(key)) {
+        res.status(400).json({ error: `Unknown filter: ${key}`, allowed: [...allowed] });
+        return;
+      }
+      if (typeof value === 'string') filters[key] = value;
+    }
+    res.json({ observations: listMarketObservations(filters as MarketObservationFilters) });
+  });
+
+  app.get('/api/market/observations/:id', operatorAuth.requireAuth, (req, res) => {
+    const observation = getMarketObservation(req.params.id);
+    if (!observation) {
+      res.status(404).json({ error: 'Market observation not found.' });
+      return;
+    }
+    res.json({ observation });
   });
 
   // --- Question-first research (Task 6) -----------------------------------

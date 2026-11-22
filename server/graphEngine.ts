@@ -27,6 +27,7 @@ import type {
   ResearchSourceNode,
   ResearchNoteNode,
   MarketBasis,
+  MarketObservation,
   MediaAssetDerivedPatch,
   MediaAssetNode,
 } from '../src/types/graph.ts';
@@ -1643,6 +1644,27 @@ export async function pushListingToSlabGraph(listing: {
         identityDecisions: this.db.identityDecisions.length,
       },
     };
+  }
+
+  // --- First-party market observation store (Task 1) ----------------------
+  // Append-only: raw evidence and normalized observations are never mutated
+  // in place. Corrections append new rows linked by lineage_pointer.
+
+  /** Append one observation to the persisted collection. */
+  public addMarketObservationRecord(observation: MarketObservation): MarketObservation {
+    this.db.marketObservations.push(observation);
+    this.persist();
+    return observation;
+  }
+
+  /** Return a defensive shallow copy of all stored observations. */
+  public listMarketObservationRecords(): MarketObservation[] {
+    return [...this.db.marketObservations];
+  }
+
+  /** Look up an observation by id, or null when not found. */
+  public getMarketObservationRecord(id: string): MarketObservation | null {
+    return this.db.marketObservations.find((o) => o.id === id) ?? null;
   }
 
   // --- First-party media asset store (Task 5) -----------------------------
