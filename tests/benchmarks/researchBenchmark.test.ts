@@ -80,9 +80,6 @@ type PriceWithBasis = PriceComponents & { basis?: MarketBasis };
 function withBasis(input: PriceComponents, basis: MarketBasis): PriceWithBasis {
   return { ...input, basis };
 }
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
 function confidenceRank(c: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN'): number {
   return { UNKNOWN: 0, LOW: 1, MEDIUM: 2, HIGH: 3 }[c];
 }
@@ -369,6 +366,9 @@ const llmEnvKeys = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
   'OLLAMA_BASE_URL',
+  // Keep the isolated app open: a host-level operator passcode would lock it
+  // and turn every endpoint call below into a 401.
+  'SLABGRAPH_ADMIN_PASSCODE',
 ];
 const originalKeys: Record<string, string | undefined> = {};
 let tempDataDir: string;

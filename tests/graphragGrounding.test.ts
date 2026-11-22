@@ -122,6 +122,8 @@ test('POST /api/research/question envelope exposes confidence/missingData and de
     'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
     'OLLAMA_BASE_URL',
+    // Keep the isolated app open regardless of host-level operator config.
+    'SLABGRAPH_ADMIN_PASSCODE',
   ];
   const originalKeys: Record<string, string | undefined> = {};
   const tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'slabswarm-graphrag-envelope-'));

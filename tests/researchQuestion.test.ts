@@ -18,6 +18,8 @@ const llmEnvKeys = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
   'OLLAMA_BASE_URL',
+  // Keep the isolated app open regardless of host-level operator config.
+  'SLABGRAPH_ADMIN_PASSCODE',
 ];
 let tempDataDir: string;
 let createApp: typeof import('../server.ts')['createApp'];

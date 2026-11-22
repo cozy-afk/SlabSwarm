@@ -16,6 +16,7 @@ import { MEDIA_KINDS } from '../src/types/graph.ts';
 // Isolate both the JSON store and the media blob directory.
 const originalDataDir = process.env.SLABGRAPH_DATA_DIR;
 const originalTestMode = process.env.SLABGRAPH_TEST_MODE;
+const originalPasscode = process.env.SLABGRAPH_ADMIN_PASSCODE;
 let tempDataDir: string;
 let storeMediaAsset: typeof import('../server/mediaStore.ts')['storeMediaAsset'];
 let getMediaAsset: typeof import('../server/mediaStore.ts')['getMediaAsset'];
@@ -51,6 +52,8 @@ before(async () => {
   tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'slabswarm-media-store-'));
   process.env.SLABGRAPH_DATA_DIR = tempDataDir;
   process.env.SLABGRAPH_TEST_MODE = '1';
+  // Keep the isolated app open regardless of host-level operator config.
+  delete process.env.SLABGRAPH_ADMIN_PASSCODE;
   // Dynamic import AFTER overrides: graphEngine loads the temp store on import.
   ({ storeMediaAsset, getMediaAsset } = await import('../server/mediaStore.ts'));
   ({ createApp } = await import('../server.ts'));
@@ -69,6 +72,8 @@ after(() => {
   else process.env.SLABGRAPH_DATA_DIR = originalDataDir;
   if (originalTestMode === undefined) delete process.env.SLABGRAPH_TEST_MODE;
   else process.env.SLABGRAPH_TEST_MODE = originalTestMode;
+  if (originalPasscode === undefined) delete process.env.SLABGRAPH_ADMIN_PASSCODE;
+  else process.env.SLABGRAPH_ADMIN_PASSCODE = originalPasscode;
   fs.rmSync(tempDataDir, { recursive: true, force: true });
 });
 

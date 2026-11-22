@@ -10,6 +10,7 @@ import type { Express } from 'express';
 // Isolate persistence so the API test never touches real graph data.
 const originalDataDir = process.env.SLABGRAPH_DATA_DIR;
 const originalTestMode = process.env.SLABGRAPH_TEST_MODE;
+const originalPasscode = process.env.SLABGRAPH_ADMIN_PASSCODE;
 let tempDataDir: string;
 let createApp: typeof import('../server.ts')['createApp'];
 let server: Server;
@@ -20,6 +21,8 @@ before(async () => {
   process.env.SLABGRAPH_DATA_DIR = tempDataDir;
   // Skip Vite dev middleware / static hosting: no watcher should hold the loop.
   process.env.SLABGRAPH_TEST_MODE = '1';
+  // Keep the isolated app open regardless of host-level operator config.
+  delete process.env.SLABGRAPH_ADMIN_PASSCODE;
 
   // Dynamic import AFTER the overrides: graphEngine loads the temp store on import.
   ({ createApp } = await import('../server.ts'));
@@ -45,6 +48,8 @@ after(() => {
   } else {
     process.env.SLABGRAPH_TEST_MODE = originalTestMode;
   }
+  if (originalPasscode === undefined) delete process.env.SLABGRAPH_ADMIN_PASSCODE;
+  else process.env.SLABGRAPH_ADMIN_PASSCODE = originalPasscode;
   fs.rmSync(tempDataDir, { recursive: true, force: true });
 });
 
