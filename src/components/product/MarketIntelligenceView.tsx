@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 
 import type {
+  ActiveReport,
   CompView,
   Finding,
   MarketSnapshot,
@@ -23,6 +24,13 @@ import {
   ProvenanceLine,
 } from './ProductPanel.tsx';
 
+const UNKNOWN_TEXT = 'UNKNOWN' as const;
+
+/** Missing values stay UNKNOWN verbatim — never zero, null or a guess. */
+function text(value: string | null | undefined): string {
+  return value === null || value === undefined || value === '' ? UNKNOWN_TEXT : value;
+}
+
 /**
  * Market Intelligence — evidence-first findings about actively trading cards,
  * plus price / comps / market snapshots keyed by a resolved card id.
@@ -30,6 +38,10 @@ import {
  */
 export function MarketIntelligenceView() {
   const findings = useEnvelope<Finding[]>(ROUTES.findings);
+  // Real card ids, names, sets and games come from the evidence-backed active
+  // report. No card identity is invented in the browser.
+  const report = useEnvelope<ActiveReport>(ROUTES.activeReport);
+  const reportOptions = report.data?.cards ?? [];
   const [targetId, setTargetId] = useState('');
   const [activeTarget, setActiveTarget] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -148,25 +160,67 @@ export function MarketIntelligenceView() {
         description="Inspect price summaries, eligible sold comps and market momentum for one resolved trading card. Missing fees or shipping are UNKNOWN, so values are never silently understated."
         endpoints={[ROUTES.pricing, ROUTES.comps, ROUTES.market]}
       >
-        <form onSubmit={handleTarget} className="flex gap-2">
-          <input
-            aria-label="Resolved trading card id"
-            value={targetId}
-            onChange={(e) => setTargetId(e.target.value)}
-            placeholder="Resolved card id"
-            className="flex-1 rounded-md border border-[#243040] bg-[#090C10] px-3 py-2 text-xs"
-          />
-          <button
-            type="submit"
-            className="rounded-md bg-emerald-600 px-4 py-2 text-xs font-medium text-white"
-          >
-            Inspect
-          </button>
-        </form>
+        <div className="rounded-md border border-[#1F2937] bg-[#090C10] p-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <label htmlFor="card-picker" className="text-xs font-semibold text-[#E2E8F0]">
+              Select a trading card
+            </label>
+            <span className="font-mono text-[10px] text-[#64748B]">
+              source={ROUTES.activeReport}
+            </span>
+          </div>
+          {report.loading ? (
+            <LoadingState label="Loading active cards…" />
+          ) : report.error ? (
+            <p role="alert" className="mt-2 text-xs text-amber-300">
+              {report.error}
+            </p>
+          ) : reportOptions.length === 0 ? (
+            <EmptyState message="No active cards were returned. Run a discovery sweep to derive cards from evidence." />
+          ) : (
+            <select
+              id="card-picker"
+              aria-label="Select a trading card"
+              value={activeTarget ?? ''}
+              onChange={(event) => {
+                const id = event.target.value;
+                setActiveTarget(id || null);
+                setTargetId(id);
+              }}
+              className="mt-2 w-full rounded-md border border-[#243040] bg-[#090C10] px-3 py-2 text-xs text-[#CBD5E1]"
+            >
+              <option value="">Choose a card…</option>
+              {reportOptions.map((card) => (
+                <option key={card.id} value={card.id}>
+                  {text(card.name)} · {text(card.set)} · {text(card.game)} · {card.id}
+                </option>
+              ))}
+            </select>
+          )}
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[11px] text-[#64748B]">
+              Or enter a resolved card id manually
+            </summary>
+            <form onSubmit={handleTarget} className="mt-2 flex gap-2">
+              <input
+                aria-label="Resolved trading card id"
+                value={targetId}
+                onChange={(e) => setTargetId(e.target.value)}
+                className="flex-1 rounded-md border border-[#243040] bg-[#090C10] px-3 py-2 text-xs"
+              />
+              <button
+                type="submit"
+                className="rounded-md bg-emerald-600 px-4 py-2 text-xs font-medium text-white"
+              >
+                Inspect
+              </button>
+            </form>
+          </details>
+        </div>
 
         {!activeTarget ? (
           <div className="mt-4">
-            <EmptyState message="Enter a resolved trading-card id to load pricing, comps and market data." />
+            <EmptyState message="Choose a card above to load pricing, comps and market data." />
           </div>
         ) : (
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
