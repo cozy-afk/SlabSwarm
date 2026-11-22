@@ -39,7 +39,7 @@ All returned 200: `/api/health`, `/api/db/status`, `/api/evidence`, `/api/ingest
 
 ## Known limits
 
-- No SOLD/ASKING evidence yet; sales-history harvesting was disabled to stay inside the credit budget. A second bounded harvest with `TCGAPI_INCLUDE_SALES=true` would add completed-sale basis.
+- No SOLD/ASKING evidence yet. A second bounded harvest targeting Pokemon (`TCGAPI_GAME_IDS=3`, `TCGAPI_INCLUDE_SALES=true`, budget 40) reached HTTP 403 `TRIAL_CREDITS_USED` after 14 credits. The harvest stopped safely, made no retries and added no fabricated prices. Adding completed-sale basis requires the account owner to buy credits or a monthly plan.
 - Forecasts are deterministic drafts from guide comps and are not yet scored against realized outcomes — there is no future outcome data to score against.
 - Operator passcode is a claimed hash, not present in `.env`; verification used the existing bridge token rather than guessing credentials.
 - The OCI key pasted into chat in an earlier session should be rotated by its owner. It was not used here.

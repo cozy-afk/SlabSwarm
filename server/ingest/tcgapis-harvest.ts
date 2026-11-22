@@ -51,6 +51,8 @@ export interface HarvestDeps {
   maxGames?: number;
   maxExpansions?: number;
   maxCardsPerExpansion?: number;
+  /** Optional categoryIds to harvest, e.g. ['3'] for Pokemon. */
+  gameIds?: readonly string[];
 }
 
 export interface HarvestResult {
@@ -172,6 +174,7 @@ interface ChainAdapterOptions {
   maxGames: number;
   maxExpansions: number;
   maxCardsPerExpansion: number;
+  gameIds?: readonly string[];
 }
 
 interface ChainAdapter extends IngestAdapter {
@@ -333,7 +336,11 @@ function createChainAdapter(options: ChainAdapterOptions): ChainAdapter {
         if (!gamesResult) {
           return { items: state.items, meta: meta() };
         }
-        const games = rowsFromBody(gamesResult.body).slice(0, options.maxGames);
+        const allGames = rowsFromBody(gamesResult.body);
+        const games = (options.gameIds
+          ? allGames.filter((game) =>
+              options.gameIds?.includes(String(firstString(game, ['categoryId', 'id', 'gameId']) ?? '')))
+          : allGames).slice(0, options.maxGames);
         for (const game of games) {
           if (state.stoppedAtBudget) break;
           const categoryId = firstString(game, ['categoryId', 'id', 'gameId']);

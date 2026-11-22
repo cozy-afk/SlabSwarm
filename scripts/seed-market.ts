@@ -21,6 +21,10 @@ const result = await runTcgapisHarvest({
   maxGames: positiveInt('TCGAPI_MAX_GAMES', 2),
   maxExpansions: positiveInt('TCGAPI_MAX_EXPANSIONS', 1),
   maxCardsPerExpansion: positiveInt('TCGAPI_MAX_CARDS', 10),
+  gameIds: (process.env.TCGAPI_GAME_IDS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean),
   includeSalesHistory:
     String(process.env.TCGAPI_INCLUDE_SALES ?? 'false').toLowerCase() === 'true',
 });
