@@ -49,6 +49,13 @@ export async function runMigrations(
   store: DbStore,
   migrations: MigrationFile[] = DEFAULT_MIGRATIONS,
 ): Promise<MigrationReport> {
+  // Internal table used only for migration bookkeeping. It is not a Drizzle
+  // model, so the adapter maps it verbatim; create it before reading state.
+  await store.exec(
+    'CREATE TABLE IF NOT EXISTS "__schema_migrations" (' +
+      '"name" text PRIMARY KEY, "checksum" text NOT NULL, ' +
+      '"appliedAt" timestamptz NOT NULL DEFAULT now())',
+  );
   const appliedRows = await store.findAll('__schema_migrations');
   const appliedByName = new Map(
     appliedRows.map((row) => [String(row.name), row]),

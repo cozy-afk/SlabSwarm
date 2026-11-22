@@ -49,6 +49,15 @@ interface TableMeta {
 
 const metaCache = new Map<string, TableMeta>();
 
+function metaForOptional(table: string): TableMeta | null {
+  try {
+    return metaFor(table);
+  } catch {
+    // Internal tables such as __schema_migrations are not Drizzle models.
+    return null;
+  }
+}
+
 function metaFor(table: string): TableMeta {
   const cached = metaCache.get(table);
   if (cached) return cached;
@@ -69,7 +78,8 @@ function quote(identifier: string): string {
 }
 
 function toDb(table: string, row: Row): Row {
-  const meta = metaFor(table);
+  const meta = metaForOptional(table);
+  if (!meta) return { ...row };
   const out: Row = {};
   for (const [property, value] of Object.entries(row)) {
     const dbName = meta.byProperty.get(property);
@@ -79,7 +89,8 @@ function toDb(table: string, row: Row): Row {
 }
 
 function fromDb(table: string, row: Row): Row {
-  const meta = metaFor(table);
+  const meta = metaForOptional(table);
+  if (!meta) return { ...row };
   const out: Row = {};
   for (const [dbName, value] of Object.entries(row)) {
     out[meta.byDbName.get(dbName) ?? dbName] = value;
