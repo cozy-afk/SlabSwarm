@@ -7,7 +7,11 @@ import {
   dispatchAlertToChannel,
   getAlertChannelStatus,
 } from './server/alertDispatcher.ts';
+import { createAnalyticsRouter } from './server/analytics/routes.ts';
 import { createOperatorAuthManager } from './server/auth.ts';
+import { mountDbRoutes } from './server/db/routes.ts';
+import { createIngestRouter } from './server/ingest/routes.ts';
+import { mountIntelligenceRoutes } from './server/routes/intelligence.ts';
 import { graphEngine } from './server/graphEngine.ts';
 import {
   groundGraphRagAnswer,
@@ -128,6 +132,14 @@ const operatorAuth = createOperatorAuthManager(
 export async function createApp() {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
+
+  // --- Data product lanes (wired by the integrator) ---
+  // Each lane exposes a router; no lane opens a listener. All stay on the
+  // existing internal bind and share the existing operator auth gate.
+  mountDbRoutes(app, { requireAuth: operatorAuth.requireAuth });
+  app.use(createIngestRouter());
+  app.use(createAnalyticsRouter());
+  mountIntelligenceRoutes(app, operatorAuth.requireAuth);
 
   // --- Self-Hosted Health Check Endpoint (Docker / systemd / Reverse Proxy) ---
   app.get('/api/health', (_req, res) => {

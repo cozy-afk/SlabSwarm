@@ -88,7 +88,30 @@ function bodyObject(req: Request): Record<string, unknown> {
  */
 export function createIntelligenceRouter(...middleware: RequestHandler[]): Router {
   const router = express.Router();
-  if (middleware.length > 0) router.use(...middleware);
+  // This router is mounted at the app root and owns full `/api` paths. A bare
+  // router.use(auth) would therefore guard every later route, including
+  // /api/auth/login. Scope the middleware to this router's own path family.
+  const OWNED_PREFIXES = [
+    '/api/intelligence',
+    '/api/swarm',
+    '/api/simulations',
+    '/api/forecasts',
+    '/api/learning',
+  ];
+  if (middleware.length > 0) {
+    router.use((req, res, next) => {
+      const owned = OWNED_PREFIXES.some(
+        (prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`),
+      );
+      if (!owned) return next();
+      let index = 0;
+      const runNext = (): void => {
+        if (index >= middleware.length) return next();
+        middleware[index++](req, res, runNext);
+      };
+      runNext();
+    });
+  }
 
   // --- Tool registry introspection (read-only) ---
   router.get('/api/intelligence/tools', (_req, res) => {
