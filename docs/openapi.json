@@ -1,0 +1,2950 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Slabswarm Trading Card Data Product API",
+    "version": "2026-11-22.1",
+    "description": "First-party trading-card research and data product API. Raw evidence is immutable and corrections append. Simulations are hypotheses, never sales evidence. Basis is explicit (SOLD/ASKING/OFFER/GUIDE/CLAIM/POPULATION/UNKNOWN) and is never defaulted. Missing shipping, fees, FX, grade or condition is UNKNOWN, not zero. Every fact carries source, observed_at, captured_at, lineage and confidence. Deterministic code computes valuations and scores; models only propose, explain and challenge. Learning promotes only through benchmark gates.",
+    "license": {
+      "name": "Proprietary - self-hosted operator use"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Self-hosted deployment (no new public listeners)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Evidence & Ingest",
+      "description": "Immutable raw evidence and normalized market observations."
+    },
+    {
+      "name": "Catalog",
+      "description": "Deterministic identity resolution for trading cards and printings."
+    },
+    {
+      "name": "Market",
+      "description": "Price summaries, sold comps and market snapshots with explicit basis."
+    },
+    {
+      "name": "Intelligence",
+      "description": "Evidence-first findings, discovery sweeps and legacy harvest."
+    },
+    {
+      "name": "Swarm",
+      "description": "Bounded research roles that propose but never write canonical facts."
+    },
+    {
+      "name": "Forecast",
+      "description": "Scenario forecasts scored against real outcomes at 7/30/90 days."
+    },
+    {
+      "name": "Learning",
+      "description": "Source trust, calibration and benchmark-gated rule promotion."
+    },
+    {
+      "name": "SQL Lab",
+      "description": "Read-only DuckDB analysis over the Parquet lake."
+    },
+    {
+      "name": "Hermes",
+      "description": "Stable Hermes tool bridge; tool IDs must not change."
+    }
+  ],
+  "paths": {
+    "/api/evidence": {
+      "get": {
+        "tags": [
+          "Evidence & Ingest"
+        ],
+        "summary": "List immutable raw evidence records",
+        "operationId": "dp_evidence_01",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/EvidenceRecord"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "sourceId",
+            "in": "query",
+            "required": true,
+            "description": "Filter by source id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Evidence & Ingest"
+        ],
+        "summary": "Append a raw evidence record",
+        "operationId": "dp_evidence_02",
+        "responses": {
+          "201": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/EvidenceRecord"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/observations": {
+      "get": {
+        "tags": [
+          "Evidence & Ingest"
+        ],
+        "summary": "List normalized market observations",
+        "operationId": "dp_evidence_03",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/MarketObservation"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "basis",
+            "in": "query",
+            "required": true,
+            "description": "Filter by explicit basis",
+            "schema": {
+              "$ref": "#/components/schemas/Basis"
+            }
+          }
+        ]
+      }
+    },
+    "/api/ingest/{source}": {
+      "post": {
+        "tags": [
+          "Evidence & Ingest"
+        ],
+        "summary": "Ingest a source payload (adapter key)",
+        "operationId": "dp_evidence_04",
+        "responses": {
+          "202": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ActionResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "description": "Adapter/source key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/catalog/search": {
+      "get": {
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Search the canonical trading-card catalog",
+        "operationId": "dp_catalog_05",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/CatalogItem"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "Card name, set, number or game",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/catalog/{id}": {
+      "get": {
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Get one resolved trading card",
+        "operationId": "dp_catalog_06",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/CatalogItem"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Resolved trading-card id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/catalog/{id}/printings": {
+      "get": {
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "List printings of a resolved card",
+        "operationId": "dp_catalog_07",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Printing"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Resolved trading-card id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/pricing/{id}": {
+      "get": {
+        "tags": [
+          "Market"
+        ],
+        "summary": "Price summary with explicit basis",
+        "operationId": "dp_market_08",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/PriceSummary"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Resolved trading-card id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/comps/{id}": {
+      "get": {
+        "tags": [
+          "Market"
+        ],
+        "summary": "Eligible sold comps for a card",
+        "operationId": "dp_market_09",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Comp"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Resolved trading-card id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/market/{id}": {
+      "get": {
+        "tags": [
+          "Market"
+        ],
+        "summary": "Market snapshot: asks, sold count, momentum",
+        "operationId": "dp_market_10",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/MarketSnapshot"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Resolved trading-card id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/intelligence/harvest-legacy": {
+      "post": {
+        "tags": [
+          "Intelligence"
+        ],
+        "summary": "Queue a legacy evidence harvest",
+        "operationId": "dp_intelligence_11",
+        "responses": {
+          "202": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ActionResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SweepRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/intelligence/discovery-sweep": {
+      "post": {
+        "tags": [
+          "Intelligence"
+        ],
+        "summary": "Queue a discovery sweep over first-party evidence",
+        "operationId": "dp_intelligence_12",
+        "responses": {
+          "202": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ActionResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SweepRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/intelligence/findings": {
+      "get": {
+        "tags": [
+          "Intelligence"
+        ],
+        "summary": "List evidence-first trading-card findings",
+        "operationId": "dp_intelligence_13",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Finding"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/swarm/research/run": {
+      "post": {
+        "tags": [
+          "Swarm"
+        ],
+        "summary": "Start an evidence-first research swarm run",
+        "operationId": "dp_swarm_14",
+        "description": "Models propose, explain and challenge. They never write canonical facts.",
+        "responses": {
+          "201": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/SwarmRun"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResearchRunRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/swarm/runs/{id}": {
+      "get": {
+        "tags": [
+          "Swarm"
+        ],
+        "summary": "Get a swarm run trace with role claims",
+        "operationId": "dp_swarm_15",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/SwarmRun"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Swarm run id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/forecasts": {
+      "get": {
+        "tags": [
+          "Forecast"
+        ],
+        "summary": "List trading-card forecasts",
+        "operationId": "dp_forecast_16",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Forecast"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Forecast"
+        ],
+        "summary": "Create a forecast hypothesis",
+        "operationId": "dp_forecast_17",
+        "responses": {
+          "201": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/Forecast"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForecastCreateRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/forecasts/{id}": {
+      "get": {
+        "tags": [
+          "Forecast"
+        ],
+        "summary": "Get the full forecast report",
+        "operationId": "dp_forecast_18",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/Forecast"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Forecast id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/forecasts/{id}/score": {
+      "post": {
+        "tags": [
+          "Forecast"
+        ],
+        "summary": "Score a forecast against real outcomes",
+        "operationId": "dp_forecast_19",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ForecastScore"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Forecast id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/forecasts/{id}/backtest": {
+      "post": {
+        "tags": [
+          "Forecast"
+        ],
+        "summary": "Backtest a forecast deterministically",
+        "operationId": "dp_forecast_20",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ForecastScore"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Forecast id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoreRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/learning/state": {
+      "get": {
+        "tags": [
+          "Learning"
+        ],
+        "summary": "Get source trust, weights, calibration and gate state",
+        "operationId": "dp_learning_21",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/LearningState"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/learning/feedback": {
+      "post": {
+        "tags": [
+          "Learning"
+        ],
+        "summary": "Record a realized forecast outcome",
+        "operationId": "dp_learning_22",
+        "responses": {
+          "202": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ActionResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/learning/run-cycle": {
+      "post": {
+        "tags": [
+          "Learning"
+        ],
+        "summary": "Run a bounded learning cycle",
+        "operationId": "dp_learning_23",
+        "responses": {
+          "202": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ActionResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningCycleRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/sql/query": {
+      "post": {
+        "tags": [
+          "SQL Lab"
+        ],
+        "summary": "Run a read-only DuckDB query over the Parquet lake",
+        "operationId": "dp_sql_24",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/SqlQueryResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SqlQueryRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/sql/saved": {
+      "get": {
+        "tags": [
+          "SQL Lab"
+        ],
+        "summary": "List saved read-only queries",
+        "operationId": "dp_sql_25",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/SavedQuery"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "SQL Lab"
+        ],
+        "summary": "Save a read-only query",
+        "operationId": "dp_sql_26",
+        "responses": {
+          "201": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/SavedQuery"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedQueryRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OperatorBearer": []
+          }
+        ]
+      }
+    },
+    "/api/hermes/status": {
+      "get": {
+        "tags": [
+          "Hermes"
+        ],
+        "summary": "Hermes gateway status and stable tool inventory",
+        "operationId": "dp_hermes_27",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/HermesStatus"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hermes/tools": {
+      "get": {
+        "tags": [
+          "Hermes"
+        ],
+        "summary": "List stable Hermes tool IDs",
+        "operationId": "dp_hermes_28",
+        "responses": {
+          "200": {
+            "description": "Success. { data, meta } envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/HermesStatus"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Evidence insufficient; basis/coverage UNKNOWN.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OperatorBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque-in-memory-token",
+        "description": "Server-side operator session; credentials never exposed to the browser."
+      }
+    },
+    "schemas": {
+      "Basis": {
+        "type": "string",
+        "enum": [
+          "SOLD",
+          "ASKING",
+          "OFFER",
+          "GUIDE",
+          "CLAIM",
+          "POPULATION",
+          "UNKNOWN"
+        ],
+        "description": "Explicit basis. Never inferred or defaulted; UNKNOWN is the sentinel."
+      },
+      "ConfidenceBand": {
+        "type": "string",
+        "enum": [
+          "UNKNOWN",
+          "LOW",
+          "MEDIUM",
+          "HIGH"
+        ]
+      },
+      "Provenance": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "capturedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lineage": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/ConfidenceBand"
+          }
+        },
+        "required": [
+          "source",
+          "observedAt",
+          "capturedAt",
+          "lineage",
+          "confidence"
+        ],
+        "description": "Every fact carries source, observed_at, captured_at, lineage and confidence."
+      },
+      "Meta": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "contractVersion": {
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/Basis"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "correctionPolicy": {
+            "type": "string",
+            "const": "APPEND_ONLY",
+            "description": "Corrections append; raw evidence is immutable."
+          }
+        },
+        "required": [
+          "requestId",
+          "generatedAt",
+          "contractVersion"
+        ]
+      },
+      "ApiEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "description": "The endpoint-specific payload; overridden per operation via allOf."
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "description": "Standard { data, meta } response envelope used by every endpoint."
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "EvidenceRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "sourceRecordId": {
+            "type": "string"
+          },
+          "sourceUri": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capturedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "parseStatus": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "PARSED",
+              "FAILED",
+              "QUARANTINED"
+            ]
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "license": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checksumSha256": {
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "id",
+          "sourceId",
+          "sourceRecordId",
+          "capturedAt",
+          "observedAt",
+          "parseStatus",
+          "provenance"
+        ]
+      },
+      "MarketObservation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "targetIdentityRef": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/Basis"
+          },
+          "amount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "currency": {
+            "type": "string"
+          },
+          "marketplace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RAW",
+              "NORMALIZED",
+              "CONTESTED",
+              "SUPERSEDED"
+            ]
+          },
+          "priceComponents": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "id",
+          "targetIdentityRef",
+          "basis",
+          "currency",
+          "observedAt",
+          "status",
+          "provenance"
+        ]
+      },
+      "CatalogItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "game": {
+            "type": "string"
+          },
+          "set": {
+            "type": "string"
+          },
+          "number": {
+            "type": "string"
+          },
+          "identityConfidence": {
+            "$ref": "#/components/schemas/ConfidenceBand"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "game",
+          "set",
+          "number",
+          "identityConfidence",
+          "provenance"
+        ]
+      },
+      "Printing": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "finish": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "gradingPopulation": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "finish",
+          "language",
+          "provenance"
+        ]
+      },
+      "PriceSummary": {
+        "type": "object",
+        "properties": {
+          "targetId": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/Basis"
+          },
+          "low": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "median": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "high": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "currency": {
+            "type": "string"
+          },
+          "sampleSize": {
+            "type": "integer"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "targetId",
+          "basis",
+          "currency",
+          "sampleSize",
+          "provenance"
+        ]
+      },
+      "Comp": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/Basis"
+          },
+          "amount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "currency": {
+            "type": "string"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "id",
+          "basis",
+          "currency",
+          "observedAt",
+          "provenance"
+        ]
+      },
+      "MarketSnapshot": {
+        "type": "object",
+        "properties": {
+          "targetId": {
+            "type": "string"
+          },
+          "askCount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "soldCount30d": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "momentum": {
+            "type": "string",
+            "enum": [
+              "UNKNOWN",
+              "COOLING",
+              "STABLE",
+              "HEATING"
+            ]
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "targetId",
+          "momentum",
+          "provenance"
+        ]
+      },
+      "Finding": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "ACTIVE_CARD",
+              "MOMENTUM",
+              "SPREAD",
+              "ANOMALY",
+              "SOURCE_FRESHNESS",
+              "EVIDENCE_GAP"
+            ]
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/ConfidenceBand"
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "targetId",
+          "title",
+          "summary",
+          "evidenceIds",
+          "confidence",
+          "createdAt",
+          "provenance"
+        ]
+      },
+      "SwarmRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "COMPLETED",
+              "FAILED"
+            ]
+          },
+          "roleClaims": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "claim": {
+                  "type": "string"
+                },
+                "evidenceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "role",
+                "claim",
+                "evidenceIds"
+              ]
+            }
+          },
+          "synthesis": {
+            "type": "string"
+          },
+          "missingData": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "question",
+          "status",
+          "roleClaims",
+          "synthesis",
+          "missingData",
+          "createdAt"
+        ],
+        "description": "Role claims are proposals. No model writes canonical facts."
+      },
+      "Forecast": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "CARD",
+              "SET",
+              "COLLECTION",
+              "EVENT"
+            ]
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "horizonDays": {
+            "type": "integer",
+            "enum": [
+              7,
+              30,
+              90
+            ]
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "priceBands": {
+            "type": "object",
+            "properties": {
+              "low": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "NULL means UNKNOWN, never zero."
+              },
+              "base": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "NULL means UNKNOWN, never zero."
+              },
+              "high": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "NULL means UNKNOWN, never zero."
+              },
+              "currency": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "currency"
+            ]
+          },
+          "demandPressure": {
+            "type": "string",
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH"
+            ]
+          },
+          "supplyPressure": {
+            "type": "string",
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH"
+            ]
+          },
+          "drivers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "invalidators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/ConfidenceBand"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "HYPOTHESIS",
+              "SCORED",
+              "REJECTED"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "id",
+          "targetType",
+          "targetId",
+          "horizonDays",
+          "scenario",
+          "priceBands",
+          "confidence",
+          "status",
+          "createdAt",
+          "provenance"
+        ],
+        "description": "A forecast is a hypothesis until scored against real outcomes."
+      },
+      "ForecastScore": {
+        "type": "object",
+        "properties": {
+          "forecastId": {
+            "type": "string"
+          },
+          "horizonDays": {
+            "type": "integer",
+            "enum": [
+              7,
+              30,
+              90
+            ]
+          },
+          "realizedAmount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "absoluteError": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "NULL means UNKNOWN, never zero."
+          },
+          "bandCovered": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "scoredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "forecastId",
+          "horizonDays",
+          "scoredAt",
+          "provenance"
+        ]
+      },
+      "LearningState": {
+        "type": "object",
+        "properties": {
+          "sourceTrust": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sourceId": {
+                  "type": "string"
+                },
+                "trustTier": {
+                  "$ref": "#/components/schemas/ConfidenceBand"
+                }
+              },
+              "required": [
+                "sourceId",
+                "trustTier"
+              ]
+            }
+          },
+          "factorWeights": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "factor": {
+                  "type": "string"
+                },
+                "weight": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "factor",
+                "weight"
+              ]
+            }
+          },
+          "calibration": {
+            "type": "object",
+            "properties": {
+              "bins": {
+                "type": "integer"
+              },
+              "lastScoredAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "bins"
+            ]
+          },
+          "promotedRules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "benchmarkGate": {
+            "type": "string",
+            "enum": [
+              "OPEN",
+              "BLOCKED"
+            ]
+          }
+        },
+        "required": [
+          "sourceTrust",
+          "factorWeights",
+          "calibration",
+          "benchmarkGate"
+        ]
+      },
+      "SqlQueryResult": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "rowCount": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "columns",
+          "rows",
+          "rowCount",
+          "truncated"
+        ],
+        "description": "Read-only DuckDB result. NULL cells mean UNKNOWN."
+      },
+      "SavedQuery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sql": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "sql",
+          "createdAt"
+        ]
+      },
+      "ActionResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "COMPLETED",
+              "FAILED"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "provenance"
+        ]
+      },
+      "HermesStatus": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "transport": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "tools"
+        ],
+        "description": "Stable Hermes tool IDs must not be renamed."
+      },
+      "IngestRequest": {
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string"
+          },
+          "rawText": {
+            "type": "string"
+          },
+          "capturedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "rawText"
+        ]
+      },
+      "ResearchRunRequest": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "const": "EVIDENCE_FIRST"
+          }
+        },
+        "required": [
+          "question"
+        ]
+      },
+      "SweepRequest": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "const": "TRADING_CARDS"
+          }
+        }
+      },
+      "ForecastCreateRequest": {
+        "type": "object",
+        "properties": {
+          "targetType": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "horizonDays": {
+            "type": "integer",
+            "enum": [
+              7,
+              30,
+              90
+            ]
+          },
+          "scenario": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "targetType",
+          "targetId",
+          "horizonDays"
+        ]
+      },
+      "ScoreRequest": {
+        "type": "object",
+        "properties": {
+          "horizonDays": {
+            "type": "integer"
+          },
+          "targetId": {
+            "type": "string"
+          }
+        }
+      },
+      "FeedbackRequest": {
+        "type": "object",
+        "properties": {
+          "forecastId": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "forecastId",
+          "outcome"
+        ]
+      },
+      "LearningCycleRequest": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "const": "TRADING_CARDS"
+          }
+        }
+      },
+      "SqlQueryRequest": {
+        "type": "object",
+        "properties": {
+          "sql": {
+            "type": "string"
+          },
+          "readOnly": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "sql"
+        ]
+      },
+      "SavedQueryRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "sql": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "sql"
+        ]
+      }
+    }
+  }
+}
