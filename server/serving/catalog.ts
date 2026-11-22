@@ -1,9 +1,12 @@
 /**
  * Catalog read models and shared response helpers for the Phase 5 serving API.
  *
- * This module is pure: it reads a GraphStatePayload snapshot and never writes
- * to the graph, the ledger, or any external system. The graph snapshot is the
- * only source of catalog identity facts; no price is derived here.
+ * This module is pure: it reads a GraphStatePayload snapshot and the ingest
+ * ledger passed in by the caller, and never writes to the graph, the ledger,
+ * or any external system. Graph assets are the primary source of catalog
+ * identity; when no asset matches an id, identity facets are derived from
+ * first-party evidence `parsedPayload` and marked identityConfidence LOW.
+ * No price is derived here.
  *
  * Missing values are the literal string UNKNOWN (never null and never zero),
  * as required by the serving binding constraints. Every row carries an
@@ -160,6 +163,55 @@ export function syntheticProvenance(
   };
 }
 
+/** Minimal immutable ledger evidence shape used for catalog identity. */
+export interface LedgerEvidenceRow {
+  id: string;
+  sourceId: string;
+  capturedAt: string;
+  observedAt: string;
+  parsedPayload?: Record<string, unknown>;
+  lineage?: string[];
+}
+
+/** Minimal read port over the ingest ledger; IngestRepositories.evidence satisfies it. */
+export interface LedgerEvidenceReader {
+  list(filters?: Record<string, unknown>): Promise<LedgerEvidenceRow[]>;
+}
+
+/**
+ * Provenance for identity derived from a first-party ledger evidence record.
+ * The ledger source id and the immutable evidence id are both named; the
+ * source's own observed/captured timestamps are preserved verbatim. There is
+ * no price and no synthesized set/game — identityConfidence is LOW.
+ */
+export function ledgerProvenance(evidence: LedgerEvidenceRow): ServingProvenance {
+  const sourceId = typeof evidence.sourceId === 'string' && evidence.sourceId.trim() !== ''
+    ? evidence.sourceId
+    : UNKNOWN;
+  const observedAt = typeof evidence.observedAt === 'string' && evidence.observedAt.trim() !== ''
+    ? evidence.observedAt
+    : UNKNOWN;
+  const capturedAt = typeof evidence.capturedAt === 'string' && evidence.capturedAt.trim() !== ''
+    ? evidence.capturedAt
+    : UNKNOWN;
+  return {
+    source: `ingest-ledger:${sourceId}`,
+    basis: UNKNOWN as MarketBasis,
+    currency: UNKNOWN,
+    observedAt,
+    capturedAt,
+    observed_at: observedAt,
+    captured_at: capturedAt,
+    lineage: dedupe([
+      'ingest-ledger',
+      `source:${sourceId}`,
+      `evidence:${evidence.id}`,
+      ...(Array.isArray(evidence.lineage) ? evidence.lineage : []),
+    ]),
+    confidence: 'LOW',
+  };
+}
+
 // --- Catalog read models ---------------------------------------------------
 
 export interface CatalogItemView {
@@ -231,6 +283,111 @@ export function searchCatalog(
 
 export function findCatalogAsset(state: GraphStatePayload, id: string): AssetNode | null {
   return (state.assets ?? []).find((asset) => asset.id === id) ?? null;
+}
+
+// --- Ledger-backed catalog identity fallback -------------------------------
+
+const IDENTITY_FACET_KEYS = ['name', 'gameName', 'expansionName'] as const;
+
+/** Read a ledger payload field as text, or UNKNOWN when absent/empty. */
+function payloadText(payload: Record<string, unknown>, key: string): string {
+  const value = payload[key];
+  return typeof value === 'string' && value.trim() !== '' ? value : UNKNOWN;
+}
+
+/** Same ref spelling tolerance as the market facts: exact or trailing segment. */
+function payloadRefMatches(ref: string, id: string): boolean {
+  return ref === id || (ref.split(/[:/#]/).pop() ?? '') === id;
+}
+
+function identityFacetScore(row: LedgerEvidenceRow): number {
+  const payload = row.parsedPayload ?? {};
+  return IDENTITY_FACET_KEYS.filter((key) => payloadText(payload, key) !== UNKNOWN).length;
+}
+
+/** Pick the evidence row that best documents this id, deterministically. */
+export function findLedgerIdentityEvidence(
+  rows: LedgerEvidenceRow[],
+  id: string,
+): LedgerEvidenceRow | null {
+  const matches = rows.filter((row) => {
+    const payload = row.parsedPayload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    const ref = payload.targetIdentityRef;
+    return typeof ref === 'string' && payloadRefMatches(ref, id);
+  });
+  matches.sort((a, b) => identityFacetScore(b) - identityFacetScore(a) || a.id.localeCompare(b.id));
+  return matches[0] ?? null;
+}
+
+/**
+ * Derive a LOW-confidence catalog identity solely from first-party evidence.
+ * The three facets come from `name`, `gameName` and `expansionName`; every
+ * absent field is the literal UNKNOWN. No set, game, price or date is invented.
+ */
+export function toLedgerCatalogItem(
+  id: string,
+  evidence: LedgerEvidenceRow,
+): CatalogItemView {
+  const payload = evidence.parsedPayload ?? {};
+  const provenance = ledgerProvenance(evidence);
+  return {
+    id,
+    name: payloadText(payload, 'name'),
+    game: payloadText(payload, 'gameName'),
+    set: payloadText(payload, 'expansionName'),
+    number: payloadText(payload, 'number'),
+    segment: UNKNOWN,
+    variant: UNKNOWN,
+    releaseYear: UNKNOWN,
+    identityConfidence: 'LOW',
+    source: provenance.source,
+    basis: provenance.basis,
+    currency: provenance.currency,
+    provenance,
+  };
+}
+
+/**
+ * Resolve an id first against the canonical graph snapshot, then against the
+ * first-party ingest ledger. Returns null only when neither source documents
+ * the id, so callers can keep returning a 404 for genuinely unknown ids.
+ */
+export async function resolveCatalogIdentity(
+  id: string,
+  state: GraphStatePayload,
+  evidence: LedgerEvidenceReader,
+  generatedAt: string,
+): Promise<CatalogItemView | null> {
+  const asset = findCatalogAsset(state, id);
+  if (asset) return toCatalogItem(asset, generatedAt);
+  const row = findLedgerIdentityEvidence(await evidence.list(), id);
+  return row ? toLedgerCatalogItem(id, row) : null;
+}
+
+/** Search ledger-derived identities by the documented identity facets. */
+export async function searchLedgerCatalog(
+  evidence: LedgerEvidenceReader,
+  query: string,
+): Promise<CatalogItemView[]> {
+  const needle = query.trim().toLowerCase();
+  if (needle.length === 0) return [];
+  const bestById = new Map<string, LedgerEvidenceRow>();
+  for (const row of await evidence.list()) {
+    const payload = row.parsedPayload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) continue;
+    const ref = payload.targetIdentityRef;
+    if (typeof ref !== 'string' || ref.trim() === '') continue;
+    const searchable = [...IDENTITY_FACET_KEYS, 'number']
+      .map((key) => payloadText(payload, key))
+      .filter((value) => value !== UNKNOWN);
+    if (!searchable.some((value) => value.toLowerCase().includes(needle))) continue;
+    const current = bestById.get(ref);
+    if (!current || identityFacetScore(row) > identityFacetScore(current)) bestById.set(ref, row);
+  }
+  return [...bestById.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, row]) => toLedgerCatalogItem(id, row));
 }
 
 export interface PrintingView {
