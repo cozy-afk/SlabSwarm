@@ -14,7 +14,7 @@ import {
 } from './adapters/legacy.ts';
 import { createTcgapisAdapter } from './adapters/tcgapis.ts';
 import { runIngest } from './runner.ts';
-import { createInMemoryRepositories } from './store.ts';
+import { createDurableRepositories } from './store.ts';
 import type { IngestRepositories } from './types.ts';
 
 type Filters = Record<string, unknown>;
@@ -37,7 +37,9 @@ function notFound(res: Response, label: string): void {
 }
 
 export function createIngestRouter(
-  repos: IngestRepositories = createInMemoryRepositories(),
+  // Default to the durable ledger so server restarts keep all ingested
+  // evidence. Tests may still inject an isolated repository bundle.
+  repos: IngestRepositories = createDurableRepositories(),
 ): Router {
   const router = Router();
   const registry = new AdapterRegistry([
