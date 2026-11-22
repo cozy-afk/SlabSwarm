@@ -1562,7 +1562,7 @@ export async function pushListingToSlabGraph(listing: {
     tags?: string[];
     basis?: MarketBasis;
     tenantId?: string;
-    raw_payload?: Record<string, unknown>;
+    raw_payload?: string | Record<string, unknown> | null;
     checksum_sha256?: string | null;
     source_url?: string | null;
   }): ResearchSourceNode {
@@ -1661,9 +1661,21 @@ export async function pushListingToSlabGraph(listing: {
     return this.db.mediaAssets.find((a) => a.id === id);
   }
 
-  /** Look up a media record by checksum for deterministic dedupe. */
-  public getMediaAssetByChecksum(checksum: string): MediaAssetNode | undefined {
-    return this.db.mediaAssets.find((a) => a.checksum_sha256 === checksum);
+  /**
+   * Look up a media record by (tenantId, checksum) for deterministic dedupe.
+   * Dedupe is tenant-scoped: two tenants ingesting identical bytes must get
+   * separate records so tenant B never receives tenant A's asset (and its
+   * license/attribution metadata). The tenantId is compared with strict
+   * equality, including the undefined/undefined case for legacy callers that
+   * do not supply a tenant.
+   */
+  public getMediaAssetByChecksum(
+    checksum: string,
+    tenantId?: string,
+  ): MediaAssetNode | undefined {
+    return this.db.mediaAssets.find(
+      (a) => a.checksum_sha256 === checksum && a.tenantId === tenantId,
+    );
   }
 
   /** Patch derived OCR/recognition fields onto an existing record only. */

@@ -684,7 +684,7 @@ export interface ResearchSourceNode {
   basis: MarketBasis;
   capturedAt: string;
   tenantId?: string;
-  raw_payload?: Record<string, unknown>;
+  raw_payload?: string | Record<string, unknown> | null;
   checksum_sha256?: string | null;
   source_url?: string | null;
 }

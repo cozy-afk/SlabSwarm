@@ -123,8 +123,10 @@ export function storeMediaAsset(input: StoreMediaAssetInput): MediaAssetNode {
     ? createHash('sha256').update(bytes).digest('hex')
     : requireChecksum(input.checksumSha256);
 
-  // Deterministic dedupe: checksum is a fact about immutable raw content.
-  const existing = graphEngine.getMediaAssetByChecksum(checksum);
+  // Deterministic dedupe: checksum is a fact about immutable raw content,
+  // but dedupe is tenant-scoped — tenant B must never receive tenant A's
+  // record. The key is (tenantId, checksum).
+  const existing = graphEngine.getMediaAssetByChecksum(checksum, input.tenantId);
   if (existing) {
     const derivedPatch: MediaAssetDerivedPatch = {};
     if (input.ocrText !== undefined) derivedPatch.ocr_text = input.ocrText;

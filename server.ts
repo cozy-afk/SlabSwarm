@@ -51,6 +51,40 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
+
+// Allow-list of LLM provider ids accepted from caller-supplied overrides.
+// Anything outside this set is ignored (never forwarded to the router).
+const VALID_PROVIDER_IDS: ReadonlySet<string> = new Set<LLMProviderId>([
+  'gemini', 'hermes', 'openai', 'anthropic', 'ollama',
+]);
+
+/**
+ * Return a provider override only when it is an allow-listed id; otherwise
+ * undefined. This prevents arbitrary strings from reaching the LLM router.
+ */
+function sanitizeProviderOverride(value: unknown): LLMProviderId | undefined {
+  return typeof value === 'string' && VALID_PROVIDER_IDS.has(value)
+    ? (value as LLMProviderId)
+    : undefined;
+}
+
+/** Lowercase 64-hex-digit SHA-256 digest (shared research/media contract). */
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
+
+/**
+ * Validate a caller-supplied URL. Accepts http(s) URLs only; any other scheme
+ * or a malformed value is rejected. Null/undefined means "not supplied".
+ */
+function isValidHttpUrl(value: unknown): boolean {
+  if (typeof value !== 'string' || value.trim() === '') return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 const VALID_GRADES: GradeLabel[] = [
   'PSA 10',
   'BGS 9.5',
@@ -194,8 +228,29 @@ export async function createApp() {
       res.status(400).json({ error: 'tags must be an array of strings.' });
       return;
     }
+    if (Array.isArray(tags) && !tags.every((t) => typeof t === 'string')) {
+      res.status(400).json({ error: 'tags must be an array of strings.' });
+      return;
+    }
     if (basis !== undefined && !MARKET_BASES.has(basis)) {
       res.status(400).json({ error: 'Invalid basis. Basis must be a first-party market basis or UNKNOWN.' });
+      return;
+    }
+    // checksum_sha256, when supplied, must be a lowercase 64-hex digest.
+    if (checksum_sha256 !== undefined && checksum_sha256 !== null &&
+        (typeof checksum_sha256 !== 'string' || !SHA256_HEX_RE.test(checksum_sha256))) {
+      res.status(400).json({ error: 'checksum_sha256 must be a lowercase 64-character hex SHA-256 digest.' });
+      return;
+    }
+    // source_url, when supplied, must be a syntactically valid http(s) URL.
+    if (source_url !== undefined && source_url !== null && !isValidHttpUrl(source_url)) {
+      res.status(400).json({ error: 'source_url must be a valid http(s) URL.' });
+      return;
+    }
+    // raw_payload is an opaque string (or null). Reject objects, arrays and
+    // scalars so only text provenance is persisted, never arbitrary JSON.
+    if (raw_payload !== undefined && raw_payload !== null && typeof raw_payload !== 'string') {
+      res.status(400).json({ error: 'raw_payload must be a string or null.' });
       return;
     }
 
@@ -234,6 +289,9 @@ export async function createApp() {
   // marked LOW confidence with insufficient evidence and missingData.
   app.post('/api/research/question', operatorAuth.requireAuth, async (req, res) => {
     const { question, providerOverride } = req.body ?? {};
+    // Allow-list the provider override: arbitrary strings are ignored, never
+    // forwarded to the router.
+    const allowedProviderOverride = sanitizeProviderOverride(providerOverride);
     if (typeof question !== 'string' || question.trim() === '') {
       res.status(400).json({ error: 'A non-empty research question is required.' });
       return;
@@ -348,7 +406,7 @@ export async function createApp() {
             subquestions?: string[];
           }>({
             role: 'graphRagSynthesis',
-            providerOverride: providerOverride as LLMProviderId | undefined,
+            providerOverride: allowedProviderOverride,
             systemInstruction: graphRagSystemInstruction,
             prompt: `Research Question: ${cleanQuestion}\n\nSubquestions:\n${subquestions.map((s) => `- ${s}`).join('\n')}\n\nFirst-party evidence (authoritative):\n${evidenceText}\n\nKnown missing data:\n${missingData.map((m) => `- ${m}`).join('\n')}`,
             jsonSchema: {
@@ -1293,9 +1351,14 @@ export async function createApp() {
   });
 
   // --- Layer 2: Multi-Hop GraphRAG Query Console ---
-  app.post('/api/graphrag/query', async (req, res) => {
+  // Same grounding contract as /api/research/question: operator auth, strict
+  // evidence-only prompt, and the deterministic groundGraphRagAnswer guardrail
+  // are the last word over any provider output. Without a configured provider
+  // (or insufficient evidence) the answer deflects rather than guessing.
+  app.post('/api/graphrag/query', operatorAuth.requireAuth, async (req, res) => {
     try {
       const { question, providerOverride } = req.body ?? {};
+      const allowedProviderOverride = sanitizeProviderOverride(providerOverride);
       const cleanQuestion = String(question || '').trim();
       if (!cleanQuestion) {
         res.status(400).json({ error: 'Please enter a GraphRAG question.' });
@@ -1304,15 +1367,64 @@ export async function createApp() {
 
       const traversal = graphEngine.runDeterministicGraphQuery(cleanQuestion);
       const structuredContextText = traversal.facts
-        .map((f) => `- ${f.label}: ${f.value} (${f.context})`)
+        .map((f, i) => `- [gfact-${i}] ${f.label}: ${f.value} (${f.context})`)
         .join('\n');
 
-      const synthesisRes = await invokeSwarmLLM<string>({
-        role: 'graphRagSynthesis',
-        providerOverride: providerOverride as LLMProviderId | undefined,
-        systemInstruction:
-          'You are the GraphRAG Quantitative Analyst inside SlabGraph. Answer the user question in 3-4 crisp, institutional sentences grounded EXCLUSIVELY in the deterministic Knowledge Graph numbers provided. Never invent or recalculate different prices—cite only the exact figures returned by the graph database.',
-        prompt: `User Question: ${cleanQuestion}\n\nExecuted Cypher Traversal:\n${traversal.cypherQuery}\n\nDeterministic Graph Results (Ground Truth):\n${structuredContextText}`,
+      // Deterministic graph facts are the only evidence eligible to ground the
+      // answer. Each fact carries a stable id the provider must cite; its value
+      // and context carry the exact figures the guardrail will back.
+      const evidenceFacts: GraphRagEvidenceFact[] = traversal.facts.map((f, i) => ({
+        id: `gfact-${i}`,
+        kind: 'graphFact',
+        detail: `${f.label}: ${f.value} (${f.context})`,
+      }));
+      const evidenceIds = evidenceFacts.map((f) => f.id);
+      // Basis is never defaulted: only grant a known basis when a deterministic
+      // fact explicitly carries one; otherwise stay conservative.
+      const knownBasis = evidenceFacts.some((f) =>
+        /\b(SOLD|ASKING|GUIDE|CLAIM)\b/i.test(f.detail)
+      );
+
+      const graphRagSystemInstruction = [
+        'You are the GraphRAG Quantitative Analyst inside SlabGraph, a deterministic GraphRAG terminal.',
+        'GROUNDING RULES (absolute):',
+        '- Answer ONLY from the deterministic Knowledge Graph facts supplied. They are authoritative; you may reorganize them but never add, invent, estimate, or recalculate prices, dates, grades, counts, or confidence.',
+        '- Never output a numeric price unless that exact value appears in a supplied fact.',
+        '- Cite the fact id in square brackets for every claim, e.g. [gfact-0]. An answer without at least one citation is not grounded.',
+        '- Basis is never defaulted: SOLD, ASKING, GUIDE, and CLAIM are distinct and basis=UNKNOWN stays UNKNOWN.',
+        '- DEFLECTION: if the facts are insufficient or do not support the question, reply with a synthesis that explicitly begins "Insufficient evidence" and states what is missing. Never bluff.',
+        '- Confidence is a deterministic cap, never HIGH on your own authority.',
+      ].join('\n');
+
+      let draftSynthesis = '';
+      let providerUsed: string | undefined;
+      let modelUsed: string | undefined;
+      let latencyMs = 0;
+      const hasProvider = getAvailableProviders().some((p) => p.configured);
+      if (hasProvider) {
+        try {
+          const synthesisRes = await invokeSwarmLLM<string>({
+            role: 'graphRagSynthesis',
+            providerOverride: allowedProviderOverride,
+            systemInstruction: graphRagSystemInstruction,
+            prompt: `User Question: ${cleanQuestion}\n\nExecuted Cypher Traversal:\n${traversal.cypherQuery}\n\nDeterministic Graph Results (Ground Truth):\n${structuredContextText}`,
+          });
+          draftSynthesis = typeof synthesisRes.data === 'string' ? synthesisRes.data : '';
+          providerUsed = synthesisRes.providerLabel;
+          modelUsed = synthesisRes.model;
+          latencyMs = synthesisRes.latencyMs;
+        } catch {
+          // Provider unavailable: deterministic fallback (deflection) below.
+          draftSynthesis = '';
+        }
+      }
+
+      const grounded = groundGraphRagAnswer({
+        question: cleanQuestion,
+        draftSynthesis,
+        evidenceFacts,
+        evidenceIds,
+        knownBasis,
       });
 
       res.json({
@@ -1321,10 +1433,14 @@ export async function createApp() {
         matchedAssetIds: traversal.matchedAssetIds,
         matchedEventIds: traversal.matchedEventIds,
         deterministicFacts: traversal.facts,
-        synthesis: synthesisRes.data,
-        providerUsed: synthesisRes.providerLabel,
-        modelUsed: synthesisRes.model,
-        latencyMs: synthesisRes.latencyMs,
+        synthesis: grounded.synthesis,
+        deflected: grounded.deflected,
+        confidenceLabel: grounded.confidence,
+        missingData: grounded.missingData,
+        citations: grounded.citations,
+        providerUsed: providerUsed ?? 'Deterministic Guardrail',
+        modelUsed: modelUsed ?? 'In-Graph Engine',
+        latencyMs,
       });
     } catch (err) {
       res.status(500).json({
