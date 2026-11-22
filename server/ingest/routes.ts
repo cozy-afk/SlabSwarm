@@ -13,6 +13,7 @@ import {
   type LegacySnapshot,
 } from './adapters/legacy.ts';
 import { createTcgapisAdapter } from './adapters/tcgapis.ts';
+import { promoteCandidates } from './promotion.ts';
 import { runIngest } from './runner.ts';
 import { createDurableRepositories } from './store.ts';
 import type { IngestRepositories } from './types.ts';
@@ -109,6 +110,11 @@ export function createIngestRouter(
       options: { csv },
     });
     res.json({ evidence: result.evidence, candidates: result.candidates, run: result.run });
+  });
+
+  // Deterministic candidate -> observation promotion -----------------------
+  router.post('/api/ingest/promote', async (_req, res) => {
+    res.json(await promoteCandidates(repos));
   });
 
   // Legacy graph harvest ---------------------------------------------------
