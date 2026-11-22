@@ -11,7 +11,10 @@ import { createAnalyticsRouter } from './server/analytics/routes.ts';
 import { createOperatorAuthManager } from './server/auth.ts';
 import { mountDbRoutes } from './server/db/routes.ts';
 import { createIngestRouter } from './server/ingest/routes.ts';
-import { mountIntelligenceRoutes } from './server/routes/intelligence.ts';
+import { createDurableRepositories } from './server/ingest/store.ts';
+import { setActiveReportRepositories } from './server/intelligence/active-report.ts';
+import { mountIntelligenceRoutes } from './server/intelligence/routes.ts';
+import { mountServingRoutes } from './server/serving/routes.ts';
 import { graphEngine } from './server/graphEngine.ts';
 import {
   groundGraphRagAnswer,
@@ -134,10 +137,13 @@ export async function createApp() {
   app.use(express.json({ limit: '4mb' }));
 
   // --- Data product lanes (wired by the integrator) ---
-  // Each lane exposes a router; no lane opens a listener. All stay on the
-  // existing internal bind and share the existing operator auth gate.
+  // One durable ledger instance is shared by ingest, serving and intelligence
+  // so a seed written by the CLI is visible to the running server. No lane
+  // opens a listener; all stay on the existing internal bind and auth gate.
+  const dataRepositories = createDurableRepositories();
+  setActiveReportRepositories(dataRepositories);
   mountDbRoutes(app, { requireAuth: operatorAuth.requireAuth });
-  app.use(createIngestRouter());
+  app.use(createIngestRouter(dataRepositories));
   app.use(createAnalyticsRouter());
   mountIntelligenceRoutes(app, operatorAuth.requireAuth);
 
@@ -2089,6 +2095,10 @@ export async function createApp() {
       });
     }
   });
+
+  // Serving routes come after the specific routes above but before the /api
+  // catch-all: `/api/market/:id` must not shadow `/api/market/observations`.
+  mountServingRoutes(app, { repositories: dataRepositories });
 
   // Return JSON 404 for unknown /api/* paths instead of serving index.html
   app.all('/api/*', (_req, res) => {
