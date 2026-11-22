@@ -141,3 +141,42 @@ test('GET /api/ingest/adapters lists registered adapters', async () => {
     assert.ok(body.adapters.includes(id), `${id} must be registered`);
   }
 });
+
+test('harvest-legacy resolves the snapshot from SLABGRAPH_DATA_DIR at call time and envelopes the response', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const nodePath = (await import('node:path')).default;
+  const dir = mkdtempSync(nodePath.join(tmpdir(), 'slabswarm-harvest-env-'));
+  const original = process.env.SLABGRAPH_DATA_DIR;
+  try {
+    writeFileSync(nodePath.join(dir, 'slabgraph-db.json'), JSON.stringify({
+      updatedAt: '2026-11-22T15:12:35.619Z',
+      assets: [{ id: 'ENV1', title: 'Env Card' }],
+      sales: [],
+    }), 'utf-8');
+    // The router was created before this env var was set: resolution must happen at call time.
+    process.env.SLABGRAPH_DATA_DIR = dir;
+    const res = await fetch(`${baseUrl}/api/intelligence/harvest-legacy`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'backfill' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      data?: { evidence?: Array<{ sourceRecordId: string }> };
+      meta?: Record<string, unknown>;
+      evidence?: Array<{ sourceRecordId: string }>;
+    };
+    assert.ok(body.meta && typeof body.meta === 'object', 'harvest response needs meta');
+    assert.equal((body.meta as Record<string, unknown>).contractVersion, '2026-11-22.1');
+    assert.equal((body.meta as Record<string, unknown>).correctionPolicy, 'APPEND_ONLY');
+    assert.ok(Array.isArray((body.meta as Record<string, unknown>).warnings));
+    assert.ok(body.data && Array.isArray(body.data.evidence), 'harvest response needs data');
+    assert.ok(body.data.evidence.some((e) => e.sourceRecordId === 'asset:ENV1'));
+    assert.deepEqual(body.data.evidence, body.evidence, 'legacy top-level evidence must remain');
+  } finally {
+    if (original === undefined) delete process.env.SLABGRAPH_DATA_DIR;
+    else process.env.SLABGRAPH_DATA_DIR = original;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

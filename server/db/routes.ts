@@ -17,6 +17,8 @@ import express, {
   type Router,
 } from 'express';
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { resolveLegacyDbPath } from '../ingest/adapters/legacy.ts';
 import { backfillJson, type BackfillReport } from '../../scripts/backfill-json.ts';
 import { DEFAULT_MIGRATIONS } from './migrate.ts';
 import { TABLE_REGISTRY, createDefaultStore, type DbStore } from './store.ts';
@@ -42,7 +44,11 @@ export interface DbStatusPayload {
   generatedAt: string;
 }
 
-const DB_PATH = () => process.env.SLABGRAPH_DB_PATH?.trim() || '/opt/slabswarm/data/slabgraph-db.json';
+/** Resolved on every request so host and container paths both work. */
+const DB_PATH = (): string => {
+  const explicit = process.env.SLABGRAPH_DB_PATH?.trim();
+  return explicit ? path.resolve(process.cwd(), explicit) : resolveLegacyDbPath();
+};
 
 const denyUnauthenticated: OperatorAuthMiddleware = (_req, res) => {
   res.status(403).json({

@@ -135,3 +135,31 @@ test('the mounted router exposes only the two foundation endpoints and opens no 
     .sort();
   assert.deepEqual(paths, ['GET /api/db/status', 'POST /api/admin/backfill-json']);
 });
+
+test('backfill source defaults to SLABGRAPH_DATA_DIR/slabgraph-db.json, resolved at call time', async () => {
+  const store = createMemoryStore();
+  await runMigrations(store);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slabswarm-db-env-'));
+  const source = path.join(dir, 'slabgraph-db.json');
+  fs.writeFileSync(source, FIXTURE_RAW, 'utf-8');
+  const originalDataDir = process.env.SLABGRAPH_DATA_DIR;
+  const originalDbPath = process.env.SLABGRAPH_DB_PATH;
+  try {
+    delete process.env.SLABGRAPH_DB_PATH;
+    process.env.SLABGRAPH_DATA_DIR = dir;
+    await withServer(createDbRouter({ store, requireAuth: allowOperator }), async (base) => {
+      const res = await fetch(`${base}/api/admin/backfill-json`, { method: 'POST' });
+      assert.equal(res.status, 200, 'default source must follow SLABGRAPH_DATA_DIR');
+      const body = await res.json() as { ok: boolean; report: { parity: boolean } };
+      assert.equal(body.ok, true);
+      assert.equal(body.report.parity, true);
+      assert.equal(await store.count('cards'), 2);
+    });
+  } finally {
+    if (originalDataDir === undefined) delete process.env.SLABGRAPH_DATA_DIR;
+    else process.env.SLABGRAPH_DATA_DIR = originalDataDir;
+    if (originalDbPath === undefined) delete process.env.SLABGRAPH_DB_PATH;
+    else process.env.SLABGRAPH_DB_PATH = originalDbPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
