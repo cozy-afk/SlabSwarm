@@ -215,7 +215,7 @@ export interface SwarmRunRecord {
   rawTitle: string;
   marketplaceId: MarketplaceId;
   priceUsd: number;
-  verdict: 'COMMITTED_VERIFIED' | 'QUARANTINED_OUTLIER' | 'CATALYST_INJECTED';
+  verdict: 'COMMITTED_VERIFIED' | 'QUARANTINED_OUTLIER' | 'CATALYST_INJECTED' | 'HELD_UNRESOLVED';
   resolvedAssetId: string | null;
   resolvedAssetTitle: string | null;
   resolvedGrade: GradeLabel | null;
@@ -464,4 +464,274 @@ export interface GraphStatePayload {
     topArbitrageSpreadPct: number;
     trackedFranchises: string[];
   };
+}
+
+// ---------------------------------------------------------------------------
+// First-party commercial research and market schema (additive).
+// These types are normative: external APIs are adapters that write into them,
+// never the source of the schema. Existing interfaces above are unchanged.
+// ---------------------------------------------------------------------------
+
+export type MarketBasis =
+  | 'SOLD'
+  | 'ASKING'
+  | 'OFFER'
+  | 'GUIDE'
+  | 'CLAIM'
+  | 'POPULATION'
+  | 'UNKNOWN';
+
+export type ValuationBasisPolicy =
+  | 'buyer_landed_cost'
+  | 'seller_net_proceeds'
+  | 'item_only'
+  | 'guide'
+  | 'asking'
+  | 'offer'
+  | 'derived_model';
+
+/**
+ * Single source of truth for the supported first-party media kinds. The
+ * `MediaKind` type is derived from this tuple so runtime validation and the
+ * type system can never drift apart.
+ */
+export const MEDIA_KINDS = [
+  'CARD_FRONT',
+  'CARD_BACK',
+  'SLAB_LABEL',
+  'PACK',
+  'BOX',
+  'SELLER_PHOTO',
+  'SCREENSHOT',
+  'OCR_IMAGE',
+] as const;
+
+export type MediaKind = (typeof MEDIA_KINDS)[number];
+
+// First-party grade label for market observations. Grading is source-provided
+// text (e.g. "PSA 10", "BGS 9.5", "CGC 8.5", "Raw NM"), validated by the
+// grading_company / certificate_number provenance on the observation rather
+// than by the legacy GradeLabel union.
+export type MarketGradeLabel = string;
+
+// Typed evidence extractable from a research source. These are the facet and
+// evidence kinds named by the design spec (identity-resolution facets plus the
+// claim/price/population evidence kinds used by the research layer).
+export type ResearchObservationKind =
+  | 'CLAIM'
+  | 'ISSUER'
+  | 'SET'
+  | 'NUMBER'
+  | 'NAME'
+  | 'FINISH'
+  | 'PARALLEL'
+  | 'RARITY'
+  | 'LANGUAGE'
+  | 'GRADE'
+  | 'SERIAL'
+  | 'CONDITION'
+  | 'QUANTITY'
+  | 'PRICE'
+  | 'POPULATION'
+  | 'MARKET'
+  | 'OTHER';
+
+export interface PriceComponents {
+  listed_amount: number;
+  item_amount: number | null;
+  shipping_amount: number | null;
+  shipping_included: boolean | null;
+  shipping_estimated: boolean | null;
+  shipping_source: string | null;
+  buyer_premium: number | null;
+  platform_fee: number | null;
+  seller_fee: number | null;
+  tax_amount: number | null;
+  fee_basis: string | null;
+  lot_quantity: number;
+  lot_total_amount: number | null;
+  per_card_allocation_method: string | null;
+  currency: string;
+  fx_rate_to_base: number | null;
+  fx_source: string | null;
+  fx_as_of: string | null;
+  // Real-value outputs: unknown is null, never zero. Derived with FX provenance
+  // from the raw components above; never overwrite listed_amount.
+  landed_cost_buyer: number | null;
+  net_seller_proceeds: number | null;
+  normalized_item_value: number | null;
+  normalization_reason_codes: string[];
+  normalization_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
+}
+
+export interface MarketObservation {
+  id: string;
+  tenantId: string;
+  targetIdentityRef: string;
+  sourceId: string;
+  sourceFeedType: string;
+  nativeSourceRecordId: string;
+  observed_at: string;
+  source_date: string | null;
+  source_timeframe: string | null;
+  source_date_assumed: boolean;
+  captured_at: string;
+  basis: MarketBasis;
+  currency: string;
+  amount: number;
+  fees: number | null;
+  shipping_amount: number | null;
+  tax_amount: number | null;
+  quantity: number;
+  price_kind: string;
+  marketplace: string;
+  region: string;
+  seller_hashed_id: string | null;
+  buyer_hashed_id: string | null;
+  condition: string | null;
+  condition_source: string | null;
+  language: string | null;
+  finish: string | null;
+  grade: MarketGradeLabel | null;
+  grading_company: string | null;
+  certificate_number: string | null;
+  raw_evidence: Record<string, unknown>;
+  checksum_sha256: string | null;
+  mime_type: string | null;
+  source_url: string | null;
+  confidence: number;
+  confidence_band: 'HIGH' | 'MEDIUM' | 'LOW';
+  confidence_reasons: string[];
+  exact_dedupe_key: string | null;
+  near_dedupe_key: string | null;
+  cluster_id: string | null;
+  reconciliation_policy: string | null;
+  status: 'ACTIVE' | 'QUARANTINED' | 'SUPERSEDED' | 'RECONCILED';
+  lineage_pointer: string | null;
+  priceComponents: PriceComponents;
+}
+
+export interface MediaAssetNode {
+  id: string;
+  media_id?: string;
+  tenantId?: string;
+  sourceId?: string;
+  source_record_id?: string;
+  kind: MediaKind;
+  target_type:
+    | 'Card'
+    | 'Printing'
+    | 'PrintingInstance'
+    | 'SealedProduct'
+    | 'CustomCollectible'
+    | 'unresolved';
+  target_id: string | null;
+  uri: string | null;
+  blob_ref?: string | null;
+  storage_provider?: string | null;
+  checksum_sha256: string;
+  mime_type: string;
+  width?: number | null;
+  height?: number | null;
+  file_size_bytes?: number | null;
+  crop_geometry?: Record<string, unknown> | null;
+  perspective_correction?: Record<string, unknown> | null;
+  visible_facets?: string[];
+  ocr_text?: string | null;
+  recognition_candidates?: Record<string, unknown>[];
+  recognition_confidence?: number | null;
+  license: string;
+  attribution?: string | null;
+  usage_rights?: string | null;
+  source_url?: string | null;
+  source_terms?: string | null;
+  retention_state?: string | null;
+  observed_at: string;
+  captured_at?: string;
+  parser_version?: string | null;
+  decision_id?: string | null;
+}
+
+/**
+ * Fields that may be attached to an existing media asset after ingest.
+ * Derived data (OCR/recognition/parser) is mutable; immutable raw-content
+ * fields (kind, bytes, checksum, license, mime, dimensions, source) are not.
+ */
+export type MediaAssetDerivedPatch = Pick<
+  MediaAssetNode,
+  | 'ocr_text'
+  | 'recognition_candidates'
+  | 'recognition_confidence'
+  | 'parser_version'
+  | 'visible_facets'
+>;
+
+export interface ResearchSourceNode {
+  id: string;
+  type:
+    | 'USER_NOTE'
+    | 'RAW_LISTING'
+    | 'CSV_IMPORT'
+    | 'SCREENSHOT'
+    | 'NEWS'
+    | 'EVENT'
+    | 'PACK_PULL'
+    | 'POPULATION_REPORT'
+    | 'API_RESULT';
+  title: string;
+  rawText: string;
+  tags: string[];
+  basis: MarketBasis;
+  capturedAt: string;
+  tenantId?: string;
+  raw_payload?: string | Record<string, unknown> | null;
+  checksum_sha256?: string | null;
+  source_url?: string | null;
+}
+
+export interface ResearchObservationNode {
+  id: string;
+  sourceId: string;
+  kind: ResearchObservationKind;
+  value: string;
+  confidence: number;
+  evidenceIds: string[];
+  createdAt: string;
+}
+
+export interface ResearchNoteNode {
+  id: string;
+  question: string;
+  subquestions: string[];
+  evidenceIds: string[];
+  synthesis: string;
+  confidence: number;
+  missingData: string[];
+  createdAt: string;
+}
+
+export interface ResearchProjectionNode {
+  id: string;
+  assetId: string;
+  horizon: string;
+  currentValue: number;
+  projectedValue: number;
+  currency: string;
+  drivers: string[];
+  invalidationConditions: string[];
+  confidence: number;
+  createdAt: string;
+}
+
+export interface IdentityDecision {
+  id: string;
+  version: number;
+  targetRef: string;
+  status: 'RESOLVED' | 'AMBIGUOUS' | 'QUARANTINED' | 'REJECTED';
+  candidates: Array<{ ref: string; score: number }>;
+  scores: Record<string, number>;
+  votes: Array<{ role: SwarmAgentRole; vote: string }>;
+  contradictions: string[];
+  reviewerAction: 'PENDING' | 'APPROVED' | 'REJECTED' | 'NONE';
+  decidedAt: string;
 }

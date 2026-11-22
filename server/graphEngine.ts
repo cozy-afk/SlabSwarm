@@ -24,6 +24,11 @@ import type {
   SubjectNode,
   SwarmRunRecord,
   TriggeredAlert,
+  ResearchSourceNode,
+  ResearchNoteNode,
+  MarketBasis,
+  MediaAssetDerivedPatch,
+  MediaAssetNode,
 } from '../src/types/graph.ts';
 import { getAlertChannelStatus } from './alertDispatcher.ts';
 import {
@@ -1545,6 +1550,144 @@ export async function pushListingToSlabGraph(listing: {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }`;
+  }
+
+  // --- First-party research source ingest (Task 3) ------------------------
+  // Additive methods backed by Task 2 collections. Raw source text is stored
+  // immutably; a basis is never inferred from content (UNKNOWN means not supplied).
+  public addResearchSource(input: {
+    type: ResearchSourceNode['type'];
+    title: string;
+    rawText: string;
+    tags?: string[];
+    basis?: MarketBasis;
+    tenantId?: string;
+    raw_payload?: string | Record<string, unknown> | null;
+    checksum_sha256?: string | null;
+    source_url?: string | null;
+  }): ResearchSourceNode {
+    const source: ResearchSourceNode = {
+      id: `src-${randomUUID()}`,
+      type: input.type,
+      title: input.title,
+      rawText: input.rawText,
+      tags: input.tags ?? [],
+      // Basis is required on the schema; UNKNOWN is an explicit sentinel for
+      // "not supplied", never a silent promotion to SOLD/ASKING/GUIDE.
+      basis: input.basis ?? 'UNKNOWN',
+      capturedAt: new Date().toISOString(),
+      tenantId: input.tenantId,
+      raw_payload: input.raw_payload,
+      checksum_sha256: input.checksum_sha256 ?? null,
+      source_url: input.source_url ?? null,
+    };
+    this.db.researchSources.push(source);
+    this.persist();
+    return source;
+  }
+
+  /**
+   * Persist a question-first research note. All fields are supplied by the
+   * caller (deterministic facts or a provider); this engine never synthesizes
+   * content or confidence, so missing evidence stays visible as `missingData`.
+   */
+  public addResearchNote(input: Omit<ResearchNoteNode, 'id' | 'createdAt'>): ResearchNoteNode {
+    const note: ResearchNoteNode = {
+      id: `note-${randomUUID()}`,
+      question: input.question,
+      subquestions: [...input.subquestions],
+      evidenceIds: [...input.evidenceIds],
+      synthesis: input.synthesis,
+      confidence: input.confidence,
+      missingData: [...input.missingData],
+      createdAt: new Date().toISOString(),
+    };
+    this.db.researchNotes.push(note);
+    this.persist();
+    return note;
+  }
+
+  public getResearchState(): {
+    researchSources: ResearchSourceNode[];
+    researchObservations: PersistedGraphDatabase['researchObservations'];
+    researchNotes: PersistedGraphDatabase['researchNotes'];
+    researchProjections: PersistedGraphDatabase['researchProjections'];
+    mediaAssets: PersistedGraphDatabase['mediaAssets'];
+    marketObservations: PersistedGraphDatabase['marketObservations'];
+    identityDecisions: PersistedGraphDatabase['identityDecisions'];
+    counts: {
+      researchSources: number;
+      researchObservations: number;
+      researchNotes: number;
+      researchProjections: number;
+      mediaAssets: number;
+      marketObservations: number;
+      identityDecisions: number;
+    };
+  } {
+    return {
+      researchSources: this.db.researchSources,
+      researchObservations: this.db.researchObservations,
+      researchNotes: this.db.researchNotes,
+      researchProjections: this.db.researchProjections,
+      mediaAssets: this.db.mediaAssets,
+      marketObservations: this.db.marketObservations,
+      identityDecisions: this.db.identityDecisions,
+      counts: {
+        researchSources: this.db.researchSources.length,
+        researchObservations: this.db.researchObservations.length,
+        researchNotes: this.db.researchNotes.length,
+        researchProjections: this.db.researchProjections.length,
+        mediaAssets: this.db.mediaAssets.length,
+        marketObservations: this.db.marketObservations.length,
+        identityDecisions: this.db.identityDecisions.length,
+      },
+    };
+  }
+
+  // --- First-party media asset store (Task 5) -----------------------------
+  // Additive methods backing Task 2's mediaAssets collection. Raw bytes are
+  // stored separately by mediaStore.ts; this engine only owns the records.
+
+  /** Insert a media record. Dedupe is enforced by the caller's checksum. */
+  public addMediaAsset(asset: MediaAssetNode): MediaAssetNode {
+    this.db.mediaAssets.push(asset);
+    this.persist();
+    return asset;
+  }
+
+  /** Look up a media record by id without exposing the whole database. */
+  public getMediaAssetById(id: string): MediaAssetNode | undefined {
+    return this.db.mediaAssets.find((a) => a.id === id);
+  }
+
+  /**
+   * Look up a media record by (tenantId, checksum) for deterministic dedupe.
+   * Dedupe is tenant-scoped: two tenants ingesting identical bytes must get
+   * separate records so tenant B never receives tenant A's asset (and its
+   * license/attribution metadata). The tenantId is compared with strict
+   * equality, including the undefined/undefined case for legacy callers that
+   * do not supply a tenant.
+   */
+  public getMediaAssetByChecksum(
+    checksum: string,
+    tenantId?: string,
+  ): MediaAssetNode | undefined {
+    return this.db.mediaAssets.find(
+      (a) => a.checksum_sha256 === checksum && a.tenantId === tenantId,
+    );
+  }
+
+  /** Patch derived OCR/recognition fields onto an existing record only. */
+  public updateMediaAssetDerived(
+    id: string,
+    patch: MediaAssetDerivedPatch,
+  ): MediaAssetNode | undefined {
+    const asset = this.db.mediaAssets.find((a) => a.id === id);
+    if (!asset) return undefined;
+    Object.assign(asset, patch);
+    this.persist();
+    return asset;
   }
 
   public getState(includeFees = true): GraphStatePayload {

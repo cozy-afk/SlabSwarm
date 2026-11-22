@@ -10,6 +10,10 @@ import {
 import { createOperatorAuthManager } from './server/auth.ts';
 import { graphEngine } from './server/graphEngine.ts';
 import {
+  groundGraphRagAnswer,
+  type GraphRagEvidenceFact,
+} from './server/graphRagGuardrails.ts';
+import {
   HERMES_TOOL_DEFINITIONS,
   dispatchHermesWebhook,
   executeHermesTool,
@@ -29,21 +33,58 @@ import {
   clearProviderCredentials,
   setProviderCredentials,
 } from './server/llmSettings.ts';
+import { getMediaAsset, isValidSha256Hex, storeMediaAsset } from './server/mediaStore.ts';
 import { indexMissingNodes, searchSemanticNodes } from './server/vectorIndex.ts';
 import type {
   AlertRule,
   GradeLabel,
   LLMProviderId,
+  MarketBasis,
   MarketplaceId,
   MarketSegment,
   SwarmRunRecord,
   SwarmStepTrace,
 } from './src/types/graph.ts';
+import { MEDIA_KINDS } from './src/types/graph.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
+
+// Allow-list of LLM provider ids accepted from caller-supplied overrides.
+// Anything outside this set is ignored (never forwarded to the router).
+const VALID_PROVIDER_IDS: ReadonlySet<string> = new Set<LLMProviderId>([
+  'gemini', 'hermes', 'openai', 'anthropic', 'ollama',
+]);
+
+/**
+ * Return a provider override only when it is an allow-listed id; otherwise
+ * undefined. This prevents arbitrary strings from reaching the LLM router.
+ */
+function sanitizeProviderOverride(value: unknown): LLMProviderId | undefined {
+  return typeof value === 'string' && VALID_PROVIDER_IDS.has(value)
+    ? (value as LLMProviderId)
+    : undefined;
+}
+
+/** Lowercase 64-hex-digit SHA-256 digest (shared research/media contract). */
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
+
+/**
+ * Validate a caller-supplied URL. Accepts http(s) URLs only; any other scheme
+ * or a malformed value is rejected. Null/undefined means "not supplied".
+ */
+function isValidHttpUrl(value: unknown): boolean {
+  if (typeof value !== 'string' || value.trim() === '') return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 const VALID_GRADES: GradeLabel[] = [
   'PSA 10',
   'BGS 9.5',
@@ -73,7 +114,11 @@ const operatorAuth = createOperatorAuthManager(
   (hash) => graphEngine.setAdminPasscodeHash(hash)
 );
 
-async function startServer() {
+// Build the Express application with all routes. Exported so API tests can
+// drive real handlers over an ephemeral port without auto-starting a listener.
+// When SLABGRAPH_TEST_MODE is set, Vite dev middleware and static hosting are
+// skipped (the API is all tests need) so no long-lived watcher keeps Node alive.
+export async function createApp() {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
 
@@ -136,6 +181,455 @@ async function startServer() {
   app.get('/api/graph/state', (req, res) => {
     const includeFees = req.query.includeFees !== 'false';
     res.json(graphEngine.getState(includeFees));
+  });
+
+  // --- First-party research source ingest & state (Task 3) ---
+  const RESEARCH_SOURCE_TYPES = new Set([
+    'USER_NOTE',
+    'RAW_LISTING',
+    'CSV_IMPORT',
+    'SCREENSHOT',
+    'NEWS',
+    'EVENT',
+    'PACK_PULL',
+    'POPULATION_REPORT',
+    'API_RESULT',
+  ]);
+  const MARKET_BASES = new Set([
+    'SOLD',
+    'ASKING',
+    'OFFER',
+    'GUIDE',
+    'CLAIM',
+    'POPULATION',
+    'UNKNOWN',
+  ]);
+
+  app.post('/api/research/source', operatorAuth.requireAuth, (req, res) => {
+    const { type, title, rawText, tags, basis, tenantId, raw_payload, checksum_sha256, source_url } =
+      req.body ?? {};
+
+    if (!type || !RESEARCH_SOURCE_TYPES.has(type)) {
+      res.status(400).json({
+        error:
+          'A valid research source type is required (USER_NOTE, RAW_LISTING, CSV_IMPORT, SCREENSHOT, NEWS, EVENT, PACK_PULL, POPULATION_REPORT, API_RESULT).',
+      });
+      return;
+    }
+    if (typeof title !== 'string' || title.trim() === '') {
+      res.status(400).json({ error: 'A non-empty title is required.' });
+      return;
+    }
+    if (typeof rawText !== 'string' || rawText.trim() === '') {
+      res.status(400).json({ error: 'Non-empty rawText is required.' });
+      return;
+    }
+    if (tags !== undefined && !Array.isArray(tags)) {
+      res.status(400).json({ error: 'tags must be an array of strings.' });
+      return;
+    }
+    if (Array.isArray(tags) && !tags.every((t) => typeof t === 'string')) {
+      res.status(400).json({ error: 'tags must be an array of strings.' });
+      return;
+    }
+    if (basis !== undefined && !MARKET_BASES.has(basis)) {
+      res.status(400).json({ error: 'Invalid basis. Basis must be a first-party market basis or UNKNOWN.' });
+      return;
+    }
+    // checksum_sha256, when supplied, must be a lowercase 64-hex digest.
+    if (checksum_sha256 !== undefined && checksum_sha256 !== null &&
+        (typeof checksum_sha256 !== 'string' || !SHA256_HEX_RE.test(checksum_sha256))) {
+      res.status(400).json({ error: 'checksum_sha256 must be a lowercase 64-character hex SHA-256 digest.' });
+      return;
+    }
+    // source_url, when supplied, must be a syntactically valid http(s) URL.
+    if (source_url !== undefined && source_url !== null && !isValidHttpUrl(source_url)) {
+      res.status(400).json({ error: 'source_url must be a valid http(s) URL.' });
+      return;
+    }
+    // raw_payload is an opaque string (or null). Reject objects, arrays and
+    // scalars so only text provenance is persisted, never arbitrary JSON.
+    if (raw_payload !== undefined && raw_payload !== null && typeof raw_payload !== 'string') {
+      res.status(400).json({ error: 'raw_payload must be a string or null.' });
+      return;
+    }
+
+    try {
+      const source = graphEngine.addResearchSource({
+        type,
+        title: title.trim(),
+        rawText,
+        tags: tags as string[] | undefined,
+        basis: basis as MarketBasis | undefined,
+        tenantId,
+        raw_payload,
+        checksum_sha256,
+        source_url,
+      });
+      res.status(201).json({
+        source,
+        state: graphEngine.getResearchState(),
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to ingest research source.',
+      });
+    }
+  });
+
+  app.get('/api/research/state', operatorAuth.requireAuth, (_req, res) => {
+    res.json(graphEngine.getResearchState());
+  });
+
+  // --- Question-first research (Task 6) -----------------------------------
+  // A research question decomposes into subquestions and is answered against
+  // first-party deterministic evidence only. LLM output may reorganize that
+  // evidence but may never invent facts, prices, or confidence. With no
+  // provider (or insufficient evidence) the note is still saved, explicitly
+  // marked LOW confidence with insufficient evidence and missingData.
+  app.post('/api/research/question', operatorAuth.requireAuth, async (req, res) => {
+    const { question, providerOverride } = req.body ?? {};
+    // Allow-list the provider override: arbitrary strings are ignored, never
+    // forwarded to the router.
+    const allowedProviderOverride = sanitizeProviderOverride(providerOverride);
+    if (typeof question !== 'string' || question.trim() === '') {
+      res.status(400).json({ error: 'A non-empty research question is required.' });
+      return;
+    }
+    const cleanQuestion = question.trim();
+
+    try {
+      const state = graphEngine.getResearchState();
+      const evidenceIds: string[] = [];
+      const evidenceFacts: GraphRagEvidenceFact[] = [];
+
+      // Deterministic facts authority: only first-party collections are
+      // eligible evidence. No external or fabricated numbers enter here.
+      // Task 7: graph facts + research observations are the grounding set.
+      for (const source of state.researchSources) {
+        evidenceIds.push(source.id);
+        evidenceFacts.push({
+          id: source.id,
+          kind: 'researchSource',
+          detail: `${source.type} · ${source.title} · basis=${source.basis}`,
+        });
+      }
+      for (const observation of state.researchObservations) {
+        evidenceIds.push(observation.id);
+        evidenceFacts.push({
+          id: observation.id,
+          kind: 'researchObservation',
+          detail: `${observation.kind} · ${observation.value} (confidence=${observation.confidence})`,
+        });
+      }
+      for (const media of state.mediaAssets) {
+        evidenceIds.push(media.id);
+        evidenceFacts.push({
+          id: media.id,
+          kind: 'mediaAsset',
+          detail: `${media.kind} · target=${media.target_type} · sha256=${media.checksum_sha256.slice(0, 12)}`,
+        });
+      }
+
+      // Task 7: deterministic graph facts are grounding evidence too. Market
+      // observations carry an explicit basis and amount emitted by the graph
+      // engine — never computed or invented by the model. They are the only
+      // priced facts eligible to back a numeric price in a grounded answer.
+      for (const observation of state.marketObservations) {
+        evidenceIds.push(observation.id);
+        // Canonical USD price token so the deterministic verifier can back a
+        // grounded answer that cites this real market observation ($amount).
+        // Non-USD amounts stay currency-labelled and are never treated as USD.
+        const priceToken =
+          observation.currency?.toUpperCase() === 'USD'
+            ? `$${Number(observation.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : `${observation.currency} ${observation.amount}`;
+        evidenceFacts.push({
+          id: observation.id,
+          kind: 'marketObservation',
+          detail: `MARKET ${observation.basis} · ${priceToken} · qty=${observation.quantity} · marketplace=${observation.marketplace}`,
+        });
+      }
+
+      // Deterministic subquestion decomposition — never invented by the LLM.
+      const subquestions: string[] = [
+        `What first-party evidence is available for: ${cleanQuestion}?`,
+        'Which claims are supported by deterministic facts, and which are unsupported?',
+        'What evidence is still missing to answer with confidence?',
+      ];
+
+      const hasProvider = getAvailableProviders().some((p) => p.configured);
+      const hasKnownBasis =
+        state.researchSources.some((s) => s.basis !== 'UNKNOWN') ||
+        state.marketObservations.some((o) => o.basis !== 'UNKNOWN');
+
+      // Task 7: the GraphRAG system instruction now makes deterministic
+      // evidence the sole authority. Prices/numbers may only be repeated from
+      // the supplied facts, every claim needs an [evidenceId] citation, and
+      // unsupported questions must be deflected — never answered by guesswork.
+      const graphRagSystemInstruction = [
+        'You are the Question-First Research Agent for SlabGraph, a deterministic GraphRAG terminal.',
+        'GROUNDING RULES (absolute):',
+        '- Answer ONLY from the first-party evidence facts supplied. They are authoritative; you may reorganize them but never add, invent, estimate, or recalculate prices, dates, grades, counts, or confidence.',
+        '- Never output a numeric price unless that exact value appears in a supplied evidence fact. No made-up dollar amounts, comps, or market values.',
+        '- Cite the evidence id in square brackets for every claim, e.g. [src-123]. An answer without at least one citation is not grounded.',
+        '- Basis is never defaulted: SOLD, ASKING, GUIDE, and CLAIM are distinct. Treat basis=UNKNOWN as UNKNOWN.',
+        '- Missing data stays UNKNOWN. Do not fill gaps with plausible-sounding numbers or assumptions.',
+        '- DEFLECTION: if the evidence is insufficient, empty, or does not support the question, reply with a synthesis that explicitly begins "Insufficient evidence" and states what is missing. Never bluff a confident answer.',
+        '- Confidence is a deterministic cap, not a free choice: without a known market basis use LOW; never claim HIGH on your own authority.',
+        'Return JSON with: synthesis (string), confidence (LOW/MEDIUM/HIGH), subquestions (array of strings).',
+      ].join('\n');
+
+      const missingData: string[] = [];
+      if (evidenceIds.length === 0) {
+        missingData.push('No first-party research sources, observations, or media evidence are available.');
+      }
+      if (!hasKnownBasis) {
+        missingData.push('No source with a known market basis (SOLD / ASKING / GUIDE / CLAIM) is available.');
+      }
+      missingData.push('No verified price comps are attached to this question.');
+
+      const evidenceText = evidenceFacts.length
+        ? evidenceFacts.map((f) => `- [${f.id}] ${f.detail}`).join('\n')
+        : '(none — no first-party evidence is available)';
+
+      let draftSynthesis = '';
+      let requestedConfidence = '';
+      let evidenceMode = 'deterministic_fallback';
+      let providerUsed: string | undefined;
+
+      if (hasProvider) {
+        try {
+          const synthesized = await invokeSwarmLLM<{
+            synthesis?: string;
+            confidence?: string;
+            subquestions?: string[];
+          }>({
+            role: 'graphRagSynthesis',
+            providerOverride: allowedProviderOverride,
+            systemInstruction: graphRagSystemInstruction,
+            prompt: `Research Question: ${cleanQuestion}\n\nSubquestions:\n${subquestions.map((s) => `- ${s}`).join('\n')}\n\nFirst-party evidence (authoritative):\n${evidenceText}\n\nKnown missing data:\n${missingData.map((m) => `- ${m}`).join('\n')}`,
+            jsonSchema: {
+              synthesis: { type: 'STRING', description: 'Evidence-grounded synthesis. No invented numbers. Every claim cites an [evidenceId].' },
+              confidence: { type: 'STRING', description: 'LOW, MEDIUM, or HIGH; deterministic evidence caps this, never HIGH without known basis.' },
+              subquestions: { type: 'ARRAY', itemsType: 'STRING', description: 'Subquestions answered.' },
+            },
+          });
+          const data = synthesized.data;
+          if (typeof data?.synthesis === 'string') {
+            draftSynthesis = data.synthesis.trim();
+            requestedConfidence = String(data.confidence || '');
+          }
+          if (Array.isArray(data?.subquestions) && data.subquestions.length > 0) {
+            subquestions.splice(0, subquestions.length, ...data.subquestions.filter((q) => typeof q === 'string'));
+          }
+          evidenceMode = 'swarm_provider';
+          providerUsed = `${synthesized.providerLabel} (${synthesized.model})`;
+        } catch {
+          // Provider unavailable: deterministic fallback below.
+          draftSynthesis = '';
+          requestedConfidence = '';
+        }
+      }
+
+      // Task 7: run the provider draft through the deterministic guardrail.
+      // This is the last word on grounding — deterministic facts are authority
+      // over the model, so an uncited or invented price is deflected here even
+      // if the provider ignored its system instruction.
+      const grounded = groundGraphRagAnswer({
+        question: cleanQuestion,
+        draftSynthesis,
+        evidenceFacts,
+        evidenceIds,
+        knownBasis: hasKnownBasis,
+        requestedConfidence,
+      });
+      const synthesis = grounded.synthesis;
+
+      // ResearchNoteNode.confidence stays numeric (Task 1 schema). Map the
+      // grounded band to a conservative numeric value; UNKNOWN and LOW are
+      // both 0.2 so missing evidence is never treated as a factual value.
+      const confidenceByBand: Record<string, number> = {
+        UNKNOWN: 0.2,
+        LOW: 0.2,
+        MEDIUM: 0.6,
+        HIGH: 0.8,
+      };
+      const confidence = confidenceByBand[grounded.confidence] ?? 0.2;
+      const confidenceLabel = grounded.confidence;
+
+      const finalMissingData = grounded.missingData.length
+        ? grounded.missingData
+        : ['Unspecified evidence gaps.'];
+
+      const note = graphEngine.addResearchNote({
+        question: cleanQuestion,
+        subquestions,
+        evidenceIds,
+        synthesis,
+        confidence,
+        missingData: finalMissingData,
+      });
+      res.status(201).json({
+        note,
+        confidence,
+        confidenceLabel,
+        missingData: finalMissingData,
+        deflected: grounded.deflected,
+        citations: grounded.citations,
+        evidenceMode,
+        ...(providerUsed ? { providerUsed } : {}),
+        evidenceFacts,
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to record research question.',
+      });
+    }
+  });
+
+  // --- First-party media evidence ingest / retrieval (Task 5) -------------
+  // Raw bytes are immutable; all derived OCR/recognition data is attached to
+  // the record. License metadata is mandatory for commercial use. Kinds are
+  // validated against the single source of truth in src/types/graph.ts.
+  const MEDIA_KIND_SET: ReadonlySet<string> = new Set<string>(MEDIA_KINDS);
+
+  app.post('/api/media/ingest', operatorAuth.requireAuth, (req, res) => {
+    const body = req.body ?? {};
+    const {
+      kind,
+      bytesBase64,
+      uri,
+      checksumSha256,
+      mimeType,
+      width,
+      height,
+      license,
+      attribution,
+      sourceUrl,
+      sourceTerms,
+      usageRights,
+      observedAt,
+      capturedAt,
+      tenantId,
+      sourceId,
+      sourceRecordId,
+      targetType,
+      targetId,
+      ocrText,
+      recognitionCandidates,
+      recognitionConfidence,
+      parserVersion,
+      visibleFacets,
+    } = body;
+
+    if (!MEDIA_KIND_SET.has(kind)) {
+      res.status(400).json({
+        error:
+          'A valid media kind is required (CARD_FRONT, CARD_BACK, SLAB_LABEL, PACK, BOX, SELLER_PHOTO, SCREENSHOT, OCR_IMAGE).',
+      });
+      return;
+    }
+    if (typeof license !== 'string' || license.trim() === '') {
+      res.status(400).json({ error: 'License metadata is required for commercial use.' });
+      return;
+    }
+    if (typeof mimeType !== 'string' || mimeType.trim() === '') {
+      res.status(400).json({ error: 'A non-empty mimeType is required.' });
+      return;
+    }
+    if (bytesBase64 === undefined && uri === undefined) {
+      res.status(400).json({ error: 'Either bytesBase64 or uri is required.' });
+      return;
+    }
+    if (bytesBase64 !== undefined && uri !== undefined) {
+      res.status(400).json({ error: 'Provide either bytesBase64 or uri, not both.' });
+      return;
+    }
+    if (bytesBase64 !== undefined && typeof bytesBase64 !== 'string') {
+      res.status(400).json({ error: 'bytesBase64 must be a base64-encoded string.' });
+      return;
+    }
+    if (uri !== undefined && typeof uri !== 'string') {
+      res.status(400).json({ error: 'uri must be a string.' });
+      return;
+    }
+    // URI references require a well-formed lowercase 64-hex SHA-256 checksum.
+    if (uri !== undefined && !isValidSha256Hex(checksumSha256)) {
+      res.status(400).json({
+        error: 'checksumSha256 must be a lowercase 64-character hex SHA-256 digest.',
+      });
+      return;
+    }
+    // Image dimensions, when supplied, must be finite positive integers.
+    const isPositiveInt = (v: unknown): boolean =>
+      typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0;
+    if ((width !== undefined && width !== null && !isPositiveInt(width)) ||
+        (height !== undefined && height !== null && !isPositiveInt(height))) {
+      res.status(400).json({ error: 'width and height must be finite positive integers.' });
+      return;
+    }
+
+    let bytes: Buffer | undefined;
+    if (bytesBase64 !== undefined) {
+      // Reject malformed base64 before decoding: restrict to the standard
+      // alphabet with optional padding, require a non-empty payload, and
+      // verify the decode -> re-encode round-trip matches the input.
+      const trimmed = bytesBase64.trim();
+      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed) || trimmed.length % 4 !== 0 ||
+          trimmed.length === 0) {
+        res.status(400).json({ error: 'bytesBase64 is not valid base64 image data.' });
+        return;
+      }
+      bytes = Buffer.from(trimmed, 'base64');
+      if (bytes.length === 0 || bytes.toString('base64') !== trimmed) {
+        res.status(400).json({ error: 'bytesBase64 is not valid base64 image data.' });
+        return;
+      }
+    }
+
+    try {
+      const media = storeMediaAsset({
+        kind,
+        bytes,
+        uri,
+        checksumSha256,
+        mimeType,
+        width,
+        height,
+        license,
+        attribution,
+        sourceUrl,
+        sourceTerms,
+        usageRights,
+        observedAt: observedAt ?? new Date().toISOString(),
+        capturedAt,
+        tenantId,
+        sourceId,
+        sourceRecordId,
+        targetType,
+        targetId,
+        ocrText,
+        recognitionCandidates,
+        recognitionConfidence,
+        parserVersion,
+        visibleFacets,
+      });
+      res.status(201).json({ media });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Failed to ingest media asset.',
+      });
+    }
+  });
+
+  app.get('/api/media/:id', operatorAuth.requireAuth, (req, res) => {
+    const media = getMediaAsset(req.params.id);
+    if (!media) {
+      res.status(404).json({ error: 'Media asset not found.' });
+      return;
+    }
+    res.json({ media });
   });
 
   app.get('/api/blueprint', (_req, res) => {
@@ -405,15 +899,9 @@ async function startServer() {
         providerOverride,
       } = req.body ?? {};
 
-      const allAssets = graphEngine.getAssets();
-      if (allAssets.length === 0) {
-        res.status(400).json({
-          error:
-            'Your canonical catalog is empty. Add at least one collectible via the Setup Guide or "+ Register Collectible" before running Swarm ingestion.',
-        });
-        return;
-      }
-
+      // Note: an empty canonical catalog no longer blocks ingest. An
+      // unresolved raw title is captured as first-party research evidence
+      // instead of being forced onto a fabricated asset.
       let itemKind: 'LISTING' | 'CATALYST' =
         kind === 'CATALYST' ? 'CATALYST' : 'LISTING';
       let itemTitle = String(rawTitle || '').trim();
@@ -445,7 +933,52 @@ async function startServer() {
         return;
       }
 
+      const allAssets = graphEngine.getAssets();
       const steps: SwarmStepTrace[] = [];
+
+      // No canonical assets yet: hold the raw listing as first-party
+      // research evidence. Never fabricate an asset ID or a price from an
+      // unresolved title; a research question can be asked against it later.
+      if (allAssets.length === 0) {
+        const source = graphEngine.addResearchSource({
+          type: 'RAW_LISTING',
+          title: itemTitle,
+          rawText: [
+            itemKind === 'CATALYST' ? `Catalyst headline: ${itemTitle}` : `Raw listing title: ${itemTitle}`,
+            itemNotes ? `Seller notes: ${itemNotes}` : '',
+            `Marketplace: ${itemMarketplace}`,
+          ].filter(Boolean).join('\n'),
+          tags: ['unresolved-ingest', 'no-canonical-catalog'],
+          // Basis is explicit UNKNOWN: a raw, unresolved title is not a SOLD comp.
+          basis: 'UNKNOWN',
+        });
+        steps.push({
+          agent: 'Deterministic Parser',
+          status: 'PASSED',
+          provider: 'Deterministic Regex Engine',
+          latencyMs: 1,
+          summary: 'Captured unresolved raw title as first-party research evidence; no canonical asset or price inferred.',
+          payload: { sourceId: source.id, basis: source.basis },
+        });
+        if (queueId) graphEngine.removeQueuedItem(String(queueId));
+        const runRecord: SwarmRunRecord = {
+          id: `RUN-${Date.now().toString().slice(-5)}`,
+          timestamp: new Date().toISOString(),
+          kind: itemKind,
+          rawTitle: itemTitle,
+          marketplaceId: itemMarketplace,
+          priceUsd: 0,
+          verdict: 'HELD_UNRESOLVED',
+          resolvedAssetId: null,
+          resolvedAssetTitle: null,
+          resolvedGrade: null,
+          steps,
+          graphDiff: `+1 ResearchSource (${source.id}) — unresolved raw title, no asset or price inferred`,
+        };
+        graphEngine.addSwarmRun(runRecord);
+        res.json({ run: runRecord, state: graphEngine.getState() });
+        return;
+      }
 
       // Hybrid Vector Candidate Narrowing when catalog grows large (> 12 assets)
       let candidateAssets = allAssets;
@@ -818,9 +1351,14 @@ async function startServer() {
   });
 
   // --- Layer 2: Multi-Hop GraphRAG Query Console ---
-  app.post('/api/graphrag/query', async (req, res) => {
+  // Same grounding contract as /api/research/question: operator auth, strict
+  // evidence-only prompt, and the deterministic groundGraphRagAnswer guardrail
+  // are the last word over any provider output. Without a configured provider
+  // (or insufficient evidence) the answer deflects rather than guessing.
+  app.post('/api/graphrag/query', operatorAuth.requireAuth, async (req, res) => {
     try {
       const { question, providerOverride } = req.body ?? {};
+      const allowedProviderOverride = sanitizeProviderOverride(providerOverride);
       const cleanQuestion = String(question || '').trim();
       if (!cleanQuestion) {
         res.status(400).json({ error: 'Please enter a GraphRAG question.' });
@@ -829,15 +1367,64 @@ async function startServer() {
 
       const traversal = graphEngine.runDeterministicGraphQuery(cleanQuestion);
       const structuredContextText = traversal.facts
-        .map((f) => `- ${f.label}: ${f.value} (${f.context})`)
+        .map((f, i) => `- [gfact-${i}] ${f.label}: ${f.value} (${f.context})`)
         .join('\n');
 
-      const synthesisRes = await invokeSwarmLLM<string>({
-        role: 'graphRagSynthesis',
-        providerOverride: providerOverride as LLMProviderId | undefined,
-        systemInstruction:
-          'You are the GraphRAG Quantitative Analyst inside SlabGraph. Answer the user question in 3-4 crisp, institutional sentences grounded EXCLUSIVELY in the deterministic Knowledge Graph numbers provided. Never invent or recalculate different prices—cite only the exact figures returned by the graph database.',
-        prompt: `User Question: ${cleanQuestion}\n\nExecuted Cypher Traversal:\n${traversal.cypherQuery}\n\nDeterministic Graph Results (Ground Truth):\n${structuredContextText}`,
+      // Deterministic graph facts are the only evidence eligible to ground the
+      // answer. Each fact carries a stable id the provider must cite; its value
+      // and context carry the exact figures the guardrail will back.
+      const evidenceFacts: GraphRagEvidenceFact[] = traversal.facts.map((f, i) => ({
+        id: `gfact-${i}`,
+        kind: 'graphFact',
+        detail: `${f.label}: ${f.value} (${f.context})`,
+      }));
+      const evidenceIds = evidenceFacts.map((f) => f.id);
+      // Basis is never defaulted: only grant a known basis when a deterministic
+      // fact explicitly carries one; otherwise stay conservative.
+      const knownBasis = evidenceFacts.some((f) =>
+        /\b(SOLD|ASKING|GUIDE|CLAIM)\b/i.test(f.detail)
+      );
+
+      const graphRagSystemInstruction = [
+        'You are the GraphRAG Quantitative Analyst inside SlabGraph, a deterministic GraphRAG terminal.',
+        'GROUNDING RULES (absolute):',
+        '- Answer ONLY from the deterministic Knowledge Graph facts supplied. They are authoritative; you may reorganize them but never add, invent, estimate, or recalculate prices, dates, grades, counts, or confidence.',
+        '- Never output a numeric price unless that exact value appears in a supplied fact.',
+        '- Cite the fact id in square brackets for every claim, e.g. [gfact-0]. An answer without at least one citation is not grounded.',
+        '- Basis is never defaulted: SOLD, ASKING, GUIDE, and CLAIM are distinct and basis=UNKNOWN stays UNKNOWN.',
+        '- DEFLECTION: if the facts are insufficient or do not support the question, reply with a synthesis that explicitly begins "Insufficient evidence" and states what is missing. Never bluff.',
+        '- Confidence is a deterministic cap, never HIGH on your own authority.',
+      ].join('\n');
+
+      let draftSynthesis = '';
+      let providerUsed: string | undefined;
+      let modelUsed: string | undefined;
+      let latencyMs = 0;
+      const hasProvider = getAvailableProviders().some((p) => p.configured);
+      if (hasProvider) {
+        try {
+          const synthesisRes = await invokeSwarmLLM<string>({
+            role: 'graphRagSynthesis',
+            providerOverride: allowedProviderOverride,
+            systemInstruction: graphRagSystemInstruction,
+            prompt: `User Question: ${cleanQuestion}\n\nExecuted Cypher Traversal:\n${traversal.cypherQuery}\n\nDeterministic Graph Results (Ground Truth):\n${structuredContextText}`,
+          });
+          draftSynthesis = typeof synthesisRes.data === 'string' ? synthesisRes.data : '';
+          providerUsed = synthesisRes.providerLabel;
+          modelUsed = synthesisRes.model;
+          latencyMs = synthesisRes.latencyMs;
+        } catch {
+          // Provider unavailable: deterministic fallback (deflection) below.
+          draftSynthesis = '';
+        }
+      }
+
+      const grounded = groundGraphRagAnswer({
+        question: cleanQuestion,
+        draftSynthesis,
+        evidenceFacts,
+        evidenceIds,
+        knownBasis,
       });
 
       res.json({
@@ -846,10 +1433,14 @@ async function startServer() {
         matchedAssetIds: traversal.matchedAssetIds,
         matchedEventIds: traversal.matchedEventIds,
         deterministicFacts: traversal.facts,
-        synthesis: synthesisRes.data,
-        providerUsed: synthesisRes.providerLabel,
-        modelUsed: synthesisRes.model,
-        latencyMs: synthesisRes.latencyMs,
+        synthesis: grounded.synthesis,
+        deflected: grounded.deflected,
+        confidenceLabel: grounded.confidence,
+        missingData: grounded.missingData,
+        citations: grounded.citations,
+        providerUsed: providerUsed ?? 'Deterministic Guardrail',
+        modelUsed: modelUsed ?? 'In-Graph Engine',
+        latencyMs,
       });
     } catch (err) {
       res.status(500).json({
@@ -1442,16 +2033,21 @@ async function startServer() {
   });
 
   // --- Vite Dev Middleware / Production Static Hosting ---
+  // Tests import createApp() and set SLABGRAPH_TEST_MODE so no dev watcher or
+  // static host is attached (neither is needed to exercise the API).
+  const testMode = process.env.SLABGRAPH_TEST_MODE === '1';
   const distPath = path.resolve(__dirname, 'dist');
   const isProd =
-    process.env.NODE_ENV === 'production' && fs.existsSync(distPath);
+    !testMode &&
+    process.env.NODE_ENV === 'production' &&
+    fs.existsSync(distPath);
 
   if (isProd) {
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
-  } else {
+  } else if (!testMode) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1460,14 +2056,26 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
+  return app;
+}
+
+async function startServer() {
+  const app = await createApp();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `SlabGraph self-hosted server (${isProd ? 'production' : 'development'}) listening on http://0.0.0.0:${PORT}`
+      `SlabGraph self-hosted server (${process.env.NODE_ENV === 'production' ? 'production' : 'development'}) listening on http://0.0.0.0:${PORT}`
     );
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start SlabGraph server:', err);
-  process.exit(1);
-});
+// Auto-start only when invoked directly (node server.ts / tsx server.ts).
+// Importing this module from a test must not bind a port or start Vite.
+const isMainModule =
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) {
+  startServer().catch((err) => {
+    console.error('Failed to start SlabGraph server:', err);
+    process.exit(1);
+  });
+}

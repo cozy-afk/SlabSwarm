@@ -4,10 +4,17 @@ import type {
   AlertDeliveryReceipt,
   AlertRule,
   AssetNode,
+  IdentityDecision,
   ListingSaleNode,
   MarketEventNode,
+  MarketObservation,
+  MediaAssetNode,
   PortfolioHolding,
   QueuedRawListing,
+  ResearchNoteNode,
+  ResearchObservationNode,
+  ResearchProjectionNode,
+  ResearchSourceNode,
   SetReleaseNode,
   SubjectNode,
   SwarmRunRecord,
@@ -41,6 +48,14 @@ export interface PersistedGraphDatabase {
     { narrative: string; lastUpdated: string; providerUsed: string }
   >;
   embeddings: Record<string, StoredEmbeddingRecord>;
+  // First-party commercial research collections (additive in schemaVersion 2).
+  researchSources: ResearchSourceNode[];
+  researchObservations: ResearchObservationNode[];
+  researchNotes: ResearchNoteNode[];
+  researchProjections: ResearchProjectionNode[];
+  mediaAssets: MediaAssetNode[];
+  marketObservations: MarketObservation[];
+  identityDecisions: IdentityDecision[];
   updatedAt: string;
 }
 
@@ -61,7 +76,7 @@ function resolveDataFilePath(): { dir: string; filePath: string } {
 
 export function createEmptyDatabase(): PersistedGraphDatabase {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     onboardingCompleted: false,
     adminPasscodeHash: null,
     sets: [],
@@ -76,6 +91,13 @@ export function createEmptyDatabase(): PersistedGraphDatabase {
     portfolioHoldings: [],
     customCommunityNarratives: {},
     embeddings: {},
+    researchSources: [],
+    researchObservations: [],
+    researchNotes: [],
+    researchProjections: [],
+    mediaAssets: [],
+    marketObservations: [],
+    identityDecisions: [],
     updatedAt: new Date().toISOString(),
   };
 }
@@ -98,6 +120,9 @@ export function loadPersistedDatabase(): PersistedGraphDatabase {
     return {
       ...base,
       ...parsed,
+      // Additive migration: legacy v1 files gain the new collections and are
+      // treated as v2 in memory. All existing fields from `parsed` are kept.
+      schemaVersion: 2,
       sets: Array.isArray(parsed.sets) ? parsed.sets : [],
       subjects: Array.isArray(parsed.subjects) ? parsed.subjects : [],
       assets: Array.isArray(parsed.assets) ? parsed.assets : [],
@@ -121,6 +146,23 @@ export function loadPersistedDatabase(): PersistedGraphDatabase {
         parsed.embeddings && typeof parsed.embeddings === 'object'
           ? parsed.embeddings
           : {},
+      researchSources: Array.isArray(parsed.researchSources)
+        ? parsed.researchSources
+        : [],
+      researchObservations: Array.isArray(parsed.researchObservations)
+        ? parsed.researchObservations
+        : [],
+      researchNotes: Array.isArray(parsed.researchNotes) ? parsed.researchNotes : [],
+      researchProjections: Array.isArray(parsed.researchProjections)
+        ? parsed.researchProjections
+        : [],
+      mediaAssets: Array.isArray(parsed.mediaAssets) ? parsed.mediaAssets : [],
+      marketObservations: Array.isArray(parsed.marketObservations)
+        ? parsed.marketObservations
+        : [],
+      identityDecisions: Array.isArray(parsed.identityDecisions)
+        ? parsed.identityDecisions
+        : [],
     };
   } catch (err) {
     console.error('Failed to parse persisted SlabGraph store, initializing clean store:', err);
