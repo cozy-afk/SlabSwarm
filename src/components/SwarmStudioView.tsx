@@ -410,7 +410,7 @@ export function SwarmStudioView({
 
             {state.queuedFeed.length === 0 ? (
               <div className="p-6 text-center text-xs text-[#94A3B8]">
-                No queued listings. The generic swarm still runs — it can research any trading card from built-in knowledge and first-party evidence.
+                No queued listings. Research still runs — it can investigate any trading card from first-party evidence.
               </div>
             ) : (
               <div className="divide-y divide-[#1F2937]">

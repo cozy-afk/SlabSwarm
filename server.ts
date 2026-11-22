@@ -7,7 +7,14 @@ import {
   dispatchAlertToChannel,
   getAlertChannelStatus,
 } from './server/alertDispatcher.ts';
+import { createAnalyticsRouter } from './server/analytics/routes.ts';
 import { createOperatorAuthManager } from './server/auth.ts';
+import { mountDbRoutes } from './server/db/routes.ts';
+import { createIngestRouter } from './server/ingest/routes.ts';
+import { createDurableRepositories } from './server/ingest/store.ts';
+import { setActiveReportRepositories } from './server/intelligence/active-report.ts';
+import { mountIntelligenceRoutes } from './server/intelligence/routes.ts';
+import { mountServingRoutes } from './server/serving/routes.ts';
 import { graphEngine } from './server/graphEngine.ts';
 import {
   groundGraphRagAnswer,
@@ -128,6 +135,17 @@ const operatorAuth = createOperatorAuthManager(
 export async function createApp() {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
+
+  // --- Data product lanes (wired by the integrator) ---
+  // One durable ledger instance is shared by ingest, serving and intelligence
+  // so a seed written by the CLI is visible to the running server. No lane
+  // opens a listener; all stay on the existing internal bind and auth gate.
+  const dataRepositories = createDurableRepositories();
+  setActiveReportRepositories(dataRepositories);
+  mountDbRoutes(app, { requireAuth: operatorAuth.requireAuth });
+  app.use(createIngestRouter(dataRepositories));
+  app.use(createAnalyticsRouter());
+  mountIntelligenceRoutes(app, operatorAuth.requireAuth);
 
   // --- Self-Hosted Health Check Endpoint (Docker / systemd / Reverse Proxy) ---
   app.get('/api/health', (_req, res) => {
@@ -2077,6 +2095,10 @@ export async function createApp() {
       });
     }
   });
+
+  // Serving routes come after the specific routes above but before the /api
+  // catch-all: `/api/market/:id` must not shadow `/api/market/observations`.
+  mountServingRoutes(app, { repositories: dataRepositories });
 
   // Return JSON 404 for unknown /api/* paths instead of serving index.html
   app.all('/api/*', (_req, res) => {
