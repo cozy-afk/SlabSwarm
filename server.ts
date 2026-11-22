@@ -29,7 +29,7 @@ import {
   clearProviderCredentials,
   setProviderCredentials,
 } from './server/llmSettings.ts';
-import { getMediaAsset, storeMediaAsset } from './server/mediaStore.ts';
+import { getMediaAsset, isValidSha256Hex, storeMediaAsset } from './server/mediaStore.ts';
 import { indexMissingNodes, searchSemanticNodes } from './server/vectorIndex.ts';
 import type {
   AlertRule,
@@ -38,10 +38,10 @@ import type {
   MarketBasis,
   MarketplaceId,
   MarketSegment,
-  MediaKind,
   SwarmRunRecord,
   SwarmStepTrace,
 } from './src/types/graph.ts';
+import { MEDIA_KINDS } from './src/types/graph.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -224,17 +224,9 @@ export async function createApp() {
 
   // --- First-party media evidence ingest / retrieval (Task 5) -------------
   // Raw bytes are immutable; all derived OCR/recognition data is attached to
-  // the record. License metadata is mandatory for commercial use.
-  const MEDIA_KINDS = new Set<MediaKind>([
-    'CARD_FRONT',
-    'CARD_BACK',
-    'SLAB_LABEL',
-    'PACK',
-    'BOX',
-    'SELLER_PHOTO',
-    'SCREENSHOT',
-    'OCR_IMAGE',
-  ]);
+  // the record. License metadata is mandatory for commercial use. Kinds are
+  // validated against the single source of truth in src/types/graph.ts.
+  const MEDIA_KIND_SET: ReadonlySet<string> = new Set<string>(MEDIA_KINDS);
 
   app.post('/api/media/ingest', operatorAuth.requireAuth, (req, res) => {
     const body = req.body ?? {};
@@ -265,7 +257,7 @@ export async function createApp() {
       visibleFacets,
     } = body;
 
-    if (!MEDIA_KINDS.has(kind)) {
+    if (!MEDIA_KIND_SET.has(kind)) {
       res.status(400).json({
         error:
           'A valid media kind is required (CARD_FRONT, CARD_BACK, SLAB_LABEL, PACK, BOX, SELLER_PHOTO, SCREENSHOT, OCR_IMAGE).',
@@ -284,17 +276,47 @@ export async function createApp() {
       res.status(400).json({ error: 'Either bytesBase64 or uri is required.' });
       return;
     }
+    if (bytesBase64 !== undefined && uri !== undefined) {
+      res.status(400).json({ error: 'Provide either bytesBase64 or uri, not both.' });
+      return;
+    }
     if (bytesBase64 !== undefined && typeof bytesBase64 !== 'string') {
       res.status(400).json({ error: 'bytesBase64 must be a base64-encoded string.' });
+      return;
+    }
+    if (uri !== undefined && typeof uri !== 'string') {
+      res.status(400).json({ error: 'uri must be a string.' });
+      return;
+    }
+    // URI references require a well-formed lowercase 64-hex SHA-256 checksum.
+    if (uri !== undefined && !isValidSha256Hex(checksumSha256)) {
+      res.status(400).json({
+        error: 'checksumSha256 must be a lowercase 64-character hex SHA-256 digest.',
+      });
+      return;
+    }
+    // Image dimensions, when supplied, must be finite positive integers.
+    const isPositiveInt = (v: unknown): boolean =>
+      typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0;
+    if ((width !== undefined && width !== null && !isPositiveInt(width)) ||
+        (height !== undefined && height !== null && !isPositiveInt(height))) {
+      res.status(400).json({ error: 'width and height must be finite positive integers.' });
       return;
     }
 
     let bytes: Buffer | undefined;
     if (bytesBase64 !== undefined) {
-      try {
-        bytes = Buffer.from(bytesBase64, 'base64');
-        if (bytes.length === 0) throw new Error('empty payload');
-      } catch {
+      // Reject malformed base64 before decoding: restrict to the standard
+      // alphabet with optional padding, require a non-empty payload, and
+      // verify the decode -> re-encode round-trip matches the input.
+      const trimmed = bytesBase64.trim();
+      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed) || trimmed.length % 4 !== 0 ||
+          trimmed.length === 0) {
+        res.status(400).json({ error: 'bytesBase64 is not valid base64 image data.' });
+        return;
+      }
+      bytes = Buffer.from(trimmed, 'base64');
+      if (bytes.length === 0 || bytes.toString('base64') !== trimmed) {
         res.status(400).json({ error: 'bytesBase64 is not valid base64 image data.' });
         return;
       }

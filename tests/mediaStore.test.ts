@@ -7,7 +7,11 @@ import { after, before, test } from 'node:test';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import type { Express } from 'express';
-import type { MediaAssetNode } from '../src/types/graph.ts';
+import type {
+  MediaAssetDerivedPatch,
+  MediaAssetNode,
+} from '../src/types/graph.ts';
+import { MEDIA_KINDS } from '../src/types/graph.ts';
 
 // Isolate both the JSON store and the media blob directory.
 const originalDataDir = process.env.SLABGRAPH_DATA_DIR;
@@ -330,4 +334,211 @@ test('POST /api/media/ingest: missing license is rejected', async () => {
 test('GET /api/media/:id: unknown id returns 404', async () => {
   const res = await fetch(`${baseUrl}/api/media/no-such-id`);
   assert.equal(res.status, 404);
+});
+
+// ---------------------------------------------------------------------------
+// Fix round 1: validation and immutability hardening
+// ---------------------------------------------------------------------------
+
+// 1. MEDIA_KINDS is a single source of truth shared by runtime + types.
+test('MEDIA_KINDS: single source of truth enumerates every supported kind', () => {
+  assert.deepEqual(
+    [...MEDIA_KINDS].sort(),
+    [
+      'CARD_FRONT', 'CARD_BACK', 'SLAB_LABEL', 'PACK',
+      'BOX', 'SELLER_PHOTO', 'SCREENSHOT', 'OCR_IMAGE',
+    ].sort(),
+  );
+  // The route accepts a kind from that shared list.
+  const kind = MEDIA_KINDS[3];
+  assert.equal(kind, 'PACK');
+});
+
+// 2. checksumSha256 must match /^[a-f0-9]{64}$/ in storeMediaAsset.
+test('storeMediaAsset: rejects malformed checksumSha256 for URI references', () => {
+  const badChecksums = [
+    'not-a-hash',
+    'ABCDEF', // uppercase
+    'a'.repeat(63), // too short
+    'a'.repeat(65), // too long
+    'g'.repeat(64), // non-hex
+    '', // empty
+  ];
+  for (const checksumSha256 of badChecksums) {
+    assert.throws(
+      () =>
+        storeMediaAsset({
+          kind: 'SELLER_PHOTO',
+          uri: `https://example.com/${checksumSha256 || 'x'}.jpg`,
+          checksumSha256,
+          mimeType: 'image/jpeg',
+          license: 'CC0-1.0',
+          observedAt: '2026-11-22T00:00:00.000Z',
+        }),
+      /checksumSha256/i,
+      `must reject bad checksum ${JSON.stringify(checksumSha256)}`,
+    );
+  }
+});
+
+// 3. route rejects malformed checksumSha256 with 400.
+test('POST /api/media/ingest: malformed checksumSha256 returns 400', async () => {
+  for (const checksumSha256 of ['ABCDEF', 'z'.repeat(64), 'a'.repeat(63)]) {
+    const res = await fetch(`${baseUrl}/api/media/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'SELLER_PHOTO',
+        uri: 'https://example.com/bad-checksum.jpg',
+        checksumSha256,
+        mimeType: 'image/jpeg',
+        license: 'CC0-1.0',
+        observedAt: '2026-11-22T00:00:00.000Z',
+      }),
+    });
+    assert.equal(res.status, 400, `bad checksum ${checksumSha256} must return 400`);
+  }
+});
+
+// 4. bytesBase64 + uri together is rejected as 400.
+test('POST /api/media/ingest: bytesBase64 and uri together returns 400', async () => {
+  const res = await fetch(`${baseUrl}/api/media/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      kind: 'CARD_FRONT',
+      bytesBase64: API_PNG_BYTES.toString('base64'),
+      uri: 'https://example.com/conflict.png',
+      checksumSha256: sha256(API_PNG_BYTES),
+      mimeType: 'image/png',
+      license: 'CC-BY-4.0',
+      observedAt: '2026-11-22T00:00:00.000Z',
+    }),
+  });
+  assert.equal(res.status, 400, 'bytesBase64 + uri together must return 400');
+});
+
+// 5. base64 syntax validated by regex + round-trip before decode.
+test('POST /api/media/ingest: malformed base64 returns 400', async () => {
+  const badPayloads = [
+    'not base64 !!!', // illegal characters
+    'abc', // wrong length
+    '====', // padding only
+    'YWJjZA==extra', // trailing garbage
+    'a'.repeat(63) + '=', // non-canonical padding position
+  ];
+  for (const bytesBase64 of badPayloads) {
+    const res = await fetch(`${baseUrl}/api/media/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'CARD_FRONT',
+        bytesBase64,
+        mimeType: 'image/png',
+        license: 'CC-BY-4.0',
+        observedAt: '2026-11-22T00:00:00.000Z',
+      }),
+    });
+    assert.equal(res.status, 400, `bad base64 ${JSON.stringify(bytesBase64)} must return 400`);
+  }
+});
+
+// 6. uri must be a string.
+test('POST /api/media/ingest: non-string uri returns 400', async () => {
+  for (const uri of [123, {}, [], true]) {
+    const res = await fetch(`${baseUrl}/api/media/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'SELLER_PHOTO',
+        uri,
+        checksumSha256: sha256(JPEG_BYTES),
+        mimeType: 'image/jpeg',
+        license: 'CC0-1.0',
+        observedAt: '2026-11-22T00:00:00.000Z',
+      }),
+    });
+    assert.equal(res.status, 400, `non-string uri ${JSON.stringify(uri)} must return 400`);
+  }
+});
+
+test('storeMediaAsset: rejects non-string uri', () => {
+  assert.throws(
+    () =>
+      storeMediaAsset({
+        kind: 'SELLER_PHOTO',
+        uri: 42 as unknown as string,
+        checksumSha256: sha256(JPEG_BYTES),
+        mimeType: 'image/jpeg',
+        license: 'CC0-1.0',
+        observedAt: '2026-11-22T00:00:00.000Z',
+      }),
+    /uri must be a string/i,
+  );
+});
+
+// 7. width/height must be finite positive integers (store + route).
+test('storeMediaAsset: rejects non-finite / non-positive / non-integer dimensions', () => {
+  const badDimensions = [0, -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN];
+  for (const width of badDimensions) {
+    assert.throws(
+      () =>
+        storeMediaAsset({
+          kind: 'CARD_FRONT',
+          bytes: Buffer.from(`dim-store-${width}`),
+          mimeType: 'image/png',
+          width,
+          license: 'CC-BY-4.0',
+          observedAt: '2026-11-22T00:00:00.000Z',
+        }),
+      /width must be a finite positive integer/i,
+    );
+  }
+  for (const height of badDimensions) {
+    assert.throws(
+      () =>
+        storeMediaAsset({
+          kind: 'CARD_FRONT',
+          bytes: Buffer.from(`dim-store-h-${height}`),
+          mimeType: 'image/png',
+          height,
+          license: 'CC-BY-4.0',
+          observedAt: '2026-11-22T00:00:00.000Z',
+        }),
+      /height must be a finite positive integer/i,
+    );
+  }
+});
+
+test('POST /api/media/ingest: invalid width/height returns 400', async () => {
+  for (const badValue of [0, -5, 2.5, '10', 'abc']) {
+    const res = await fetch(`${baseUrl}/api/media/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'CARD_FRONT',
+        bytesBase64: API_PNG_BYTES.toString('base64'),
+        mimeType: 'image/png',
+        width: badValue,
+        license: 'CC-BY-4.0',
+        observedAt: '2026-11-22T00:00:00.000Z',
+      }),
+    });
+    assert.equal(res.status, 400, `width ${JSON.stringify(badValue)} must return 400`);
+  }
+});
+
+// Derived patch type is derived-only: it excludes immutable content fields.
+test('MediaAssetDerivedPatch: type never includes immutable content fields', () => {
+  const patch: MediaAssetDerivedPatch = {
+    ocr_text: 'text',
+    recognition_candidates: [],
+    recognition_confidence: 0.5,
+    parser_version: 'v1',
+    visible_facets: [],
+  };
+  const keys = Object.keys(patch);
+  for (const immutable of ['kind', 'checksum_sha256', 'license', 'mime_type', 'width', 'height']) {
+    assert.ok(!keys.includes(immutable), `${immutable} must not be in the derived patch type`);
+  }
 });

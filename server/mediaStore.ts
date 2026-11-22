@@ -12,8 +12,19 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { MediaAssetNode, MediaKind } from '../src/types/graph.ts';
+import type {
+  MediaAssetDerivedPatch,
+  MediaAssetNode,
+  MediaKind,
+} from '../src/types/graph.ts';
 import { graphEngine } from './graphEngine.ts';
+
+/** Lowercase 64-hex-digit SHA-256 digest, required for all stored checksums. */
+export const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+
+export function isValidSha256Hex(value: unknown): value is string {
+  return typeof value === 'string' && SHA256_HEX_PATTERN.test(value);
+}
 
 export interface StoreMediaAssetInput {
   /** Explicit id (used when attaching derived fields to an existing asset). */
@@ -68,6 +79,26 @@ function requireText(value: string, label: string): string {
 }
 
 /**
+ * Validate an optional image dimension: must be a finite positive integer
+ * when supplied (null/undefined meaning "unknown" is allowed).
+ */
+function validateDimension(value: number | null | undefined, label: string): void {
+  if (value === undefined || value === null) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) ||
+      !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a finite positive integer.`);
+  }
+}
+
+/** Require a caller-supplied checksum to be a lowercase 64-hex SHA-256 digest. */
+function requireChecksum(value: unknown): string {
+  if (!isValidSha256Hex(value)) {
+    throw new Error('checksumSha256 must be a lowercase 64-character hex SHA-256 digest.');
+  }
+  return value;
+}
+
+/**
  * Store a media asset. Returns the canonical record — a duplicate checksum
  * returns the original record unchanged (except optional derived fields,
  * explicitly attached to the same record, never to a new one).
@@ -77,20 +108,25 @@ export function storeMediaAsset(input: StoreMediaAssetInput): MediaAssetNode {
   const mimeType = requireText(input.mimeType, 'mimeType');
   const observedAt = requireText(input.observedAt, 'observedAt');
   requireText(input.kind, 'kind');
+  validateDimension(input.width, 'width');
+  validateDimension(input.height, 'height');
 
   const bytes = input.bytes;
   const uri = input.uri ?? null;
   if (!bytes && !uri) throw new Error('Either bytes or uri is required.');
   if (bytes && uri) throw new Error('Provide either bytes or uri, not both.');
+  if (uri !== null && typeof uri !== 'string') {
+    throw new Error('uri must be a string.');
+  }
 
   const checksum = bytes
     ? createHash('sha256').update(bytes).digest('hex')
-    : requireText(input.checksumSha256 ?? '', 'checksumSha256');
+    : requireChecksum(input.checksumSha256);
 
   // Deterministic dedupe: checksum is a fact about immutable raw content.
   const existing = graphEngine.getMediaAssetByChecksum(checksum);
   if (existing) {
-    const derivedPatch: Partial<MediaAssetNode> = {};
+    const derivedPatch: MediaAssetDerivedPatch = {};
     if (input.ocrText !== undefined) derivedPatch.ocr_text = input.ocrText;
     if (input.recognitionCandidates !== undefined) {
       derivedPatch.recognition_candidates = input.recognitionCandidates ?? undefined;

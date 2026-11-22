@@ -26,6 +26,7 @@ import type {
   TriggeredAlert,
   ResearchSourceNode,
   MarketBasis,
+  MediaAssetDerivedPatch,
   MediaAssetNode,
 } from '../src/types/graph.ts';
 import { getAlertChannelStatus } from './alertDispatcher.ts';
@@ -1643,10 +1644,10 @@ export async function pushListingToSlabGraph(listing: {
     return this.db.mediaAssets.find((a) => a.checksum_sha256 === checksum);
   }
 
-  /** Patch derived OCR/recognition fields onto an existing record. */
+  /** Patch derived OCR/recognition fields onto an existing record only. */
   public updateMediaAssetDerived(
     id: string,
-    patch: Partial<MediaAssetNode>,
+    patch: MediaAssetDerivedPatch,
   ): MediaAssetNode | undefined {
     const asset = this.db.mediaAssets.find((a) => a.id === id);
     if (!asset) return undefined;

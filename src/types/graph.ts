@@ -490,15 +490,23 @@ export type ValuationBasisPolicy =
   | 'offer'
   | 'derived_model';
 
-export type MediaKind =
-  | 'CARD_FRONT'
-  | 'CARD_BACK'
-  | 'SLAB_LABEL'
-  | 'PACK'
-  | 'BOX'
-  | 'SELLER_PHOTO'
-  | 'SCREENSHOT'
-  | 'OCR_IMAGE';
+/**
+ * Single source of truth for the supported first-party media kinds. The
+ * `MediaKind` type is derived from this tuple so runtime validation and the
+ * type system can never drift apart.
+ */
+export const MEDIA_KINDS = [
+  'CARD_FRONT',
+  'CARD_BACK',
+  'SLAB_LABEL',
+  'PACK',
+  'BOX',
+  'SELLER_PHOTO',
+  'SCREENSHOT',
+  'OCR_IMAGE',
+] as const;
+
+export type MediaKind = (typeof MEDIA_KINDS)[number];
 
 // First-party grade label for market observations. Grading is source-provided
 // text (e.g. "PSA 10", "BGS 9.5", "CGC 8.5", "Raw NM"), validated by the
@@ -643,6 +651,20 @@ export interface MediaAssetNode {
   parser_version?: string | null;
   decision_id?: string | null;
 }
+
+/**
+ * Fields that may be attached to an existing media asset after ingest.
+ * Derived data (OCR/recognition/parser) is mutable; immutable raw-content
+ * fields (kind, bytes, checksum, license, mime, dimensions, source) are not.
+ */
+export type MediaAssetDerivedPatch = Pick<
+  MediaAssetNode,
+  | 'ocr_text'
+  | 'recognition_candidates'
+  | 'recognition_confidence'
+  | 'parser_version'
+  | 'visible_facets'
+>;
 
 export interface ResearchSourceNode {
   id: string;
