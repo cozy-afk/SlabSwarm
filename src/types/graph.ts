@@ -465,3 +465,218 @@ export interface GraphStatePayload {
     trackedFranchises: string[];
   };
 }
+
+// ---------------------------------------------------------------------------
+// First-party commercial research and market schema (additive).
+// These types are normative: external APIs are adapters that write into them,
+// never the source of the schema. Existing interfaces above are unchanged.
+// ---------------------------------------------------------------------------
+
+export type MarketBasis =
+  | 'SOLD'
+  | 'ASKING'
+  | 'OFFER'
+  | 'GUIDE'
+  | 'CLAIM'
+  | 'POPULATION'
+  | 'UNKNOWN';
+
+export type ValuationBasisPolicy =
+  | 'buyer_landed_cost'
+  | 'seller_net_proceeds'
+  | 'item_only'
+  | 'guide'
+  | 'asking'
+  | 'offer'
+  | 'derived_model';
+
+export type MediaKind =
+  | 'CARD_FRONT'
+  | 'CARD_BACK'
+  | 'SLAB_LABEL'
+  | 'PACK'
+  | 'BOX'
+  | 'SELLER_PHOTO'
+  | 'SCREENSHOT'
+  | 'OCR_IMAGE';
+
+export interface PriceComponents {
+  listed_amount: number;
+  item_amount: number | null;
+  shipping_amount: number | null;
+  shipping_included: boolean | null;
+  shipping_estimated: boolean | null;
+  shipping_source: string | null;
+  buyer_premium: number | null;
+  platform_fee: number | null;
+  seller_fee: number | null;
+  tax_amount: number | null;
+  fee_basis: string | null;
+  lot_quantity: number;
+  lot_total_amount: number | null;
+  per_card_allocation_method: string | null;
+  currency: string;
+  fx_rate_to_base: number | null;
+  fx_source: string | null;
+  fx_as_of: string | null;
+  normalization_reason_codes: string[];
+  normalization_confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
+}
+
+export interface MarketObservation {
+  id: string;
+  tenantId: string;
+  targetIdentityRef: string;
+  sourceId: string;
+  sourceFeedType: string;
+  nativeSourceRecordId: string;
+  observed_at: string;
+  source_date: string | null;
+  source_timeframe: string | null;
+  source_date_assumed: boolean;
+  captured_at: string;
+  basis: MarketBasis;
+  currency: string;
+  amount: number;
+  fees: number | null;
+  shipping_amount: number | null;
+  tax_amount: number | null;
+  quantity: number;
+  price_kind: string;
+  marketplace: string;
+  region: string;
+  seller_hashed_id: string | null;
+  buyer_hashed_id: string | null;
+  condition: string | null;
+  condition_source: string | null;
+  language: string | null;
+  finish: string | null;
+  grade: GradeLabel | null;
+  grading_company: string | null;
+  certificate_number: string | null;
+  raw_evidence: Record<string, unknown>;
+  checksum_sha256: string | null;
+  mime_type: string | null;
+  source_url: string | null;
+  confidence: number;
+  confidence_band: 'HIGH' | 'MEDIUM' | 'LOW';
+  confidence_reasons: string[];
+  exact_dedupe_key: string | null;
+  near_dedupe_key: string | null;
+  cluster_id: string | null;
+  reconciliation_policy: string | null;
+  status: 'ACTIVE' | 'QUARANTINED' | 'SUPERSEDED' | 'RECONCILED';
+  lineage_pointer: string | null;
+  priceComponents: PriceComponents;
+}
+
+export interface MediaAssetNode {
+  id: string;
+  media_id?: string;
+  tenantId?: string;
+  sourceId?: string;
+  source_record_id?: string;
+  kind: MediaKind;
+  target_type:
+    | 'Card'
+    | 'Printing'
+    | 'PrintingInstance'
+    | 'SealedProduct'
+    | 'CustomCollectible'
+    | 'unresolved';
+  target_id: string | null;
+  uri: string | null;
+  blob_ref?: string | null;
+  storage_provider?: string | null;
+  checksum_sha256: string;
+  mime_type: string;
+  width?: number | null;
+  height?: number | null;
+  file_size_bytes?: number | null;
+  crop_geometry?: Record<string, unknown> | null;
+  perspective_correction?: Record<string, unknown> | null;
+  visible_facets?: string[];
+  ocr_text?: string | null;
+  recognition_candidates?: Record<string, unknown>[];
+  recognition_confidence?: number | null;
+  license: string;
+  attribution?: string | null;
+  usage_rights?: string | null;
+  source_url?: string | null;
+  source_terms?: string | null;
+  retention_state?: string | null;
+  observed_at: string;
+  captured_at?: string;
+  parser_version?: string | null;
+  decision_id?: string | null;
+}
+
+export interface ResearchSourceNode {
+  id: string;
+  type:
+    | 'USER_NOTE'
+    | 'RAW_LISTING'
+    | 'CSV_IMPORT'
+    | 'SCREENSHOT'
+    | 'NEWS'
+    | 'EVENT'
+    | 'PACK_PULL'
+    | 'POPULATION_REPORT'
+    | 'API_RESULT';
+  title: string;
+  rawText: string;
+  tags: string[];
+  basis: MarketBasis;
+  capturedAt: string;
+  tenantId?: string;
+  raw_payload?: Record<string, unknown>;
+  checksum_sha256?: string | null;
+  source_url?: string | null;
+}
+
+export interface ResearchObservationNode {
+  id: string;
+  sourceId: string;
+  kind: string;
+  value: string;
+  confidence: number;
+  evidenceIds: string[];
+  createdAt: string;
+}
+
+export interface ResearchNoteNode {
+  id: string;
+  question: string;
+  subquestions: string[];
+  evidenceIds: string[];
+  synthesis: string;
+  confidence: number;
+  missingData: string[];
+  createdAt: string;
+}
+
+export interface ResearchProjectionNode {
+  id: string;
+  assetId: string;
+  horizon: string;
+  currentValue: number;
+  projectedValue: number;
+  currency: string;
+  drivers: string[];
+  invalidationConditions: string[];
+  confidence: number;
+  createdAt: string;
+}
+
+export interface IdentityDecision {
+  id: string;
+  version: number;
+  targetRef: string;
+  status: 'RESOLVED' | 'AMBIGUOUS' | 'QUARANTINED' | 'REJECTED';
+  candidates: Array<{ ref: string; score: number }>;
+  scores: Record<string, number>;
+  votes: Array<{ role: SwarmAgentRole; vote: string }>;
+  contradictions: string[];
+  reviewerAction: 'PENDING' | 'APPROVED' | 'REJECTED' | 'NONE';
+  decidedAt: string;
+}
