@@ -322,31 +322,33 @@ export default function App() {
   }
 
   async function handleRunBatchSweep() {
-    if (!graphState || graphState.queuedFeed.length === 0) {
-      setActiveTab('swarm');
-      showToast('Queue is empty. Submit a custom raw listing or POST to /api/swarm/queue.');
-      return;
-    }
-
     setIsSweeping(true);
     setGlobalError(null);
-    const itemsToProcess = graphState.queuedFeed.slice(0, 2);
-    let processed = 0;
+    setActiveTab('swarm');
 
     try {
-      for (const item of itemsToProcess) {
-        await handleIngestItem({
-          queueId: item.id,
-          kind: item.kind,
-          rawTitle: item.rawTitle,
-          marketplaceId: item.marketplaceId,
-          priceUsd: item.priceUsd,
-          sellerNotes: item.sellerNotes,
-        });
-        processed += 1;
+      const queued = graphState?.queuedFeed?.slice(0, 2) ?? [];
+      const question = queued.length
+        ? `Research these queued trading-card observations and summarize what the swarm can conclude: ${queued
+            .map((item: { rawTitle: string; sellerNotes: string }) => `${item.rawTitle}${item.sellerNotes ? ` — ${item.sellerNotes}` : ''}`)
+            .join('; ')}`
+        : 'Run a general trading-card market research sweep. Identify the strongest available evidence, missing data, and any card categories, sets, events, or price signals worth investigating next. Do not invent prices.';
+
+      const res = await apiFetch('/api/research/question', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || 'Generic swarm research failed.');
       }
-      setActiveTab('swarm');
-      showToast(`Swarm sweep completed (${processed} items triaged into Knowledge Graph).`);
+
+      showToast(
+        queued.length
+          ? `Generic swarm completed using ${queued.length} queued item(s). Research note saved.`
+          : 'Generic trading-card swarm completed. Research note saved.'
+      );
     } catch (err) {
       setGlobalError(
         err instanceof Error ? err.message : 'Swarm sweep encountered an error.'
@@ -525,7 +527,7 @@ export default function App() {
               className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               <Play className="h-3.5 w-3.5" />
-              <span>{isSweeping ? 'Running Swarm...' : 'Run Swarm Sweep'}</span>
+              <span>{isSweeping ? 'Running Swarm...' : 'Run Generic Swarm'}</span>
             </button>
           </div>
         </header>

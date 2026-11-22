@@ -410,7 +410,7 @@ export function SwarmStudioView({
 
             {state.queuedFeed.length === 0 ? (
               <div className="p-6 text-center text-xs text-[#94A3B8]">
-                All queued marketplace listings have been triaged. Submit a custom raw listing or catalyst below.
+                No queued listings. The generic swarm still runs — it can research any trading card from built-in knowledge and first-party evidence.
               </div>
             ) : (
               <div className="divide-y divide-[#1F2937]">
