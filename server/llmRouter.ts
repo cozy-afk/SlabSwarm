@@ -7,6 +7,15 @@ import type {
   SwarmRoutingConfig,
 } from '../src/types/graph.ts';
 import { validateHermesOutboundUrl } from './hermesBridge.ts';
+import {
+  applyStoredSettingsToEnv,
+  hasStoredCredentials,
+  loadStoredRouting,
+  saveStoredRouting,
+  PROVIDER_ENV_FIELDS,
+} from './llmSettings.ts';
+
+applyStoredSettingsToEnv();
 
 export interface StructuredSchemaField {
   type: 'STRING' | 'NUMBER' | 'BOOLEAN' | 'ARRAY';
@@ -52,6 +61,15 @@ const routingConfig: SwarmRoutingConfig = {
 function ensureRoutingInitialized(): void {
   if (routingInitialized) return;
   routingInitialized = true;
+
+  const stored = loadStoredRouting();
+  if (stored) {
+    (Object.keys(routingConfig) as SwarmAgentRole[]).forEach((role) => {
+      const value = stored[role];
+      if (VALID_PROVIDER_IDS.includes(value)) routingConfig[role] = value;
+    });
+    return;
+  }
 
   const providers = getAvailableProviders();
   const configuredIds = new Set(
@@ -100,7 +118,7 @@ export function getAvailableProviders(): LLMProviderInfo[] {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const ollamaUrl = process.env.OLLAMA_BASE_URL;
 
-  return [
+  const providers: Array<Omit<LLMProviderInfo, 'credentialFields' | 'hasStoredCredentials'>> = [
     {
       id: 'gemini',
       label: 'Google Gemini',
@@ -142,6 +160,11 @@ export function getAvailableProviders(): LLMProviderInfo[] {
       description: 'Private on-premise inference for zero-cost local Swarm scraping pipelines.',
     },
   ];
+  return providers.map((provider): LLMProviderInfo => ({
+    ...provider,
+    credentialFields: PROVIDER_ENV_FIELDS[provider.id],
+    hasStoredCredentials: hasStoredCredentials(provider.id),
+  }));
 }
 
 export function getSwarmRouting(): SwarmRoutingConfig {
@@ -169,6 +192,7 @@ export function updateSwarmRouting(
     routingConfig[role] = requested;
   });
 
+  saveStoredRouting(routingConfig);
   return { ...routingConfig };
 }
 

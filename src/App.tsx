@@ -28,6 +28,7 @@ import { ValuationArbitrageView } from './components/ValuationArbitrageView.tsx'
 import type {
   AuthStatusPayload,
   GraphStatePayload,
+  LLMProviderId,
   LLMProviderInfo,
   MarketplaceId,
   MarketSegment,
@@ -257,6 +258,36 @@ export default function App() {
     setProviders(json.providers || []);
     setRouting(json.routing);
     showToast('Updated server-side Swarm LLM routing.');
+  }
+
+  async function handleSaveProvider(payload: {
+    id: LLMProviderId;
+    credentials: Record<string, string>;
+    model: string;
+  }) {
+    const res = await apiFetch('/api/llm/providers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Failed to save provider settings.');
+    }
+    setProviders(json.providers || []);
+    setRouting(json.routing);
+  }
+
+  async function handleClearProvider(id: LLMProviderId) {
+    const res = await apiFetch(`/api/llm/providers/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Failed to clear provider settings.');
+    }
+    setProviders(json.providers || []);
+    setRouting(json.routing);
   }
 
   async function handleIngestItem(payload: {
@@ -572,6 +603,9 @@ export default function App() {
                   routing={routing}
                   isSweeping={isSweeping}
                   onUpdateRouting={handleUpdateRouting}
+                  onSaveProvider={handleSaveProvider}
+                  onClearProvider={handleClearProvider}
+                  onNotify={showToast}
                   onIngestItem={handleIngestItem}
                   onRunBatchSweep={handleRunBatchSweep}
                 />

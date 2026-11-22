@@ -26,6 +26,13 @@ interface SwarmStudioViewProps {
   routing: SwarmRoutingConfig;
   isSweeping: boolean;
   onUpdateRouting: (patch: Partial<SwarmRoutingConfig>) => Promise<void>;
+  onSaveProvider: (payload: {
+    id: LLMProviderId;
+    credentials: Record<string, string>;
+    model: string;
+  }) => Promise<void>;
+  onClearProvider: (id: LLMProviderId) => Promise<void>;
+  onNotify: (message: string) => void;
   onIngestItem: (payload: {
     queueId?: string;
     kind: 'LISTING' | 'CATALYST';
@@ -70,6 +77,9 @@ export function SwarmStudioView({
   routing,
   isSweeping,
   onUpdateRouting,
+  onSaveProvider,
+  onClearProvider,
+  onNotify,
   onIngestItem,
   onRunBatchSweep,
 }: SwarmStudioViewProps) {
@@ -78,6 +88,9 @@ export function SwarmStudioView({
   );
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [configuringId, setConfiguringId] = useState<LLMProviderId | null>(null);
+  const [credentialDraft, setCredentialDraft] = useState<Record<string, string>>({});
+  const [modelDraft, setModelDraft] = useState('');
 
   // Custom listing / catalyst form state
   const [customKind, setCustomKind] = useState<'LISTING' | 'CATALYST'>('LISTING');
@@ -166,22 +179,117 @@ export function SwarmStudioView({
               Server-Side Swarm LLM Router
             </h2>
             <p className="mt-0.5 text-xs text-[#94A3B8]">
-              Assign any server-configured LLM backend per agent role. Credentials remain strictly server-side via environment variables.
+              Set credentials and models here, then assign a backend per agent role. Credentials stay on the server, encrypted, and are never sent back to the browser.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs">
             {providers.map((p) => (
-              <span
+              <button
+                type="button"
                 key={p.id}
-                className={
-                  p.configured ? 'text-emerald-400' : 'text-[#64748B]'
-                }
+                onClick={() => {
+                  setErrorMsg(null);
+                  setConfiguringId(p.id);
+                  setCredentialDraft({});
+                  setModelDraft(p.defaultModel);
+                }}
+                className={`rounded border px-2 py-1 text-xs transition-colors ${
+                  p.configured
+                    ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
+                    : 'border-[#243040] text-[#64748B] hover:border-[#3b4a5e]'
+                }`}
+                title={p.envHint}
               >
-                {p.label}: {p.configured ? `Ready (${p.defaultModel})` : `Unset (${p.envHint})`}
-              </span>
+                {p.label}: {p.configured ? `Ready${p.hasStoredCredentials ? ' (saved)' : ''}` : 'Unset'} · Configure
+              </button>
             ))}
           </div>
         </div>
+
+        {configuringId && (
+          <div className="border-b border-[#1F2937] bg-[#0D1117] px-5 py-4">
+            <div className="mb-3 text-xs font-medium text-[#F1F5F9]">
+              Configure {providers.find((p) => p.id === configuringId)?.label}
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {providers
+                .find((p) => p.id === configuringId)
+                ?.credentialFields.map((field) => (
+                  <label key={field} className="block">
+                    <span className="mb-1 block font-mono text-[11px] text-[#94A3B8]">{field}</span>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      placeholder="Leave blank to keep saved value"
+                      value={credentialDraft[field] || ''}
+                      onChange={(e) =>
+                        setCredentialDraft((prev) => ({ ...prev, [field]: e.target.value }))
+                      }
+                      className="w-full rounded-md border border-[#243040] bg-[#090C10] px-2.5 py-1.5 font-mono text-xs text-[#E2E8F0] focus:border-emerald-500 focus:outline-none"
+                    />
+                  </label>
+                ))}
+              <label className="block">
+                <span className="mb-1 block font-mono text-[11px] text-[#94A3B8]">Model</span>
+                <input
+                  type="text"
+                  value={modelDraft}
+                  onChange={(e) => setModelDraft(e.target.value)}
+                  className="w-full rounded-md border border-[#243040] bg-[#090C10] px-2.5 py-1.5 font-mono text-xs text-[#E2E8F0] focus:border-emerald-500 focus:outline-none"
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg(null);
+                  onSaveProvider({
+                    id: configuringId,
+                    credentials: credentialDraft,
+                    model: modelDraft,
+                  })
+                    .then(() => {
+                      setConfiguringId(null);
+                      setCredentialDraft({});
+                      onNotify('Saved server-side LLM provider settings.');
+                    })
+                    .catch((err) =>
+                      setErrorMsg(err instanceof Error ? err.message : 'Save failed')
+                    );
+                }}
+                className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg(null);
+                  onClearProvider(configuringId)
+                    .then(() => {
+                      setConfiguringId(null);
+                      onNotify('Cleared stored provider credentials.');
+                    })
+                    .catch((err) =>
+                      setErrorMsg(err instanceof Error ? err.message : 'Clear failed')
+                    );
+                }}
+                className="rounded-md border border-rose-500/40 px-3 py-1.5 text-xs text-rose-300 hover:bg-rose-500/10"
+              >
+                Clear saved credentials
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfiguringId(null)}
+                className="rounded-md border border-[#243040] px-3 py-1.5 text-xs text-[#94A3B8] hover:border-[#3b4a5e]"
+              >
+                Cancel
+              </button>
+              {errorMsg && <span className="text-xs text-rose-300">{errorMsg}</span>}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-px bg-[#1F2937] md:grid-cols-2 xl:grid-cols-4">
           {ROLE_LABELS.map(({ role, title, task }) => (

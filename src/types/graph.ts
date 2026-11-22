@@ -172,6 +172,8 @@ export interface LLMProviderInfo {
   configured: boolean;
   envHint: string;
   description: string;
+  credentialFields: string[];
+  hasStoredCredentials: boolean;
 }
 
 export interface SwarmRoutingConfig {
