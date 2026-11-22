@@ -8,6 +8,7 @@ import {
   getAlertChannelStatus,
 } from './server/alertDispatcher.ts';
 import { createAnalyticsRouter } from './server/analytics/routes.ts';
+import { createAnalyticsStore } from './server/analytics/store.ts';
 import { createOperatorAuthManager } from './server/auth.ts';
 import { mountDbRoutes } from './server/db/routes.ts';
 import { createIngestRouter } from './server/ingest/routes.ts';
@@ -142,9 +143,17 @@ export async function createApp() {
   // opens a listener; all stay on the existing internal bind and auth gate.
   const dataRepositories = createDurableRepositories();
   setActiveReportRepositories(dataRepositories);
+  const [evidenceSeed, observationSeed] = await Promise.all([
+    dataRepositories.evidence.list(),
+    dataRepositories.marketObservations.list(),
+  ]);
+  const analyticsStore = createAnalyticsStore({
+    evidence: evidenceSeed,
+    observations: observationSeed,
+  });
   mountDbRoutes(app, { requireAuth: operatorAuth.requireAuth });
   app.use(createIngestRouter(dataRepositories));
-  app.use(createAnalyticsRouter());
+  app.use(createAnalyticsRouter({ store: analyticsStore }));
   mountIntelligenceRoutes(app, operatorAuth.requireAuth);
 
   // --- Self-Hosted Health Check Endpoint (Docker / systemd / Reverse Proxy) ---

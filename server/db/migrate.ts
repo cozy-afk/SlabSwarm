@@ -54,7 +54,7 @@ export async function runMigrations(
   await store.exec(
     'CREATE TABLE IF NOT EXISTS "__schema_migrations" (' +
       '"name" text PRIMARY KEY, "checksum" text NOT NULL, ' +
-      '"appliedAt" timestamptz NOT NULL DEFAULT now())',
+      '"applied_at" timestamptz NOT NULL DEFAULT now())',
   );
   const appliedRows = await store.findAll('__schema_migrations');
   const appliedByName = new Map(
@@ -78,7 +78,7 @@ export async function runMigrations(
         await tx.insert('__schema_migrations', {
           name: migration.name,
           checksum,
-          appliedAt: new Date().toISOString(),
+          applied_at: new Date().toISOString(),
         } as Row);
       });
     } catch (error) {

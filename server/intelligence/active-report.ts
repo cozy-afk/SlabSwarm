@@ -310,7 +310,8 @@ export async function buildActiveReport(
     const name = identity?.canonicalName ??
       payloadText(primaryEvidence, 'name') ??
       target;
-    const set = payloadText(primaryEvidence, 'set') ?? UNKNOWN;
+    const set = payloadText(primaryEvidence, 'set') ??
+      payloadText(primaryEvidence, 'expansionName') ?? UNKNOWN;
     const game = gameOf(primaryEvidence ?? {}) || UNKNOWN;
 
     cards.push({

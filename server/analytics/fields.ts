@@ -18,9 +18,9 @@ export function gameOf(record: object): string {
   const r = loose(record);
   const payload = r.parsedPayload;
   const fromPayload = payload && typeof payload === 'object'
-    ? asText(loose(payload as object).game)
+    ? asText(loose(payload as object).game) ?? asText(loose(payload as object).gameName)
     : null;
-  return fromPayload ?? asText(r.game) ?? 'UNKNOWN';
+  return fromPayload ?? asText(r.game) ?? asText(r.gameName) ?? 'UNKNOWN';
 }
 
 export function sourceOf(record: object): string {
