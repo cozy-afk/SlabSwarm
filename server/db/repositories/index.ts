@@ -26,10 +26,15 @@ export interface Repositories extends RepositoryBundle {
   identityDecisions: IdentityDecisionRepository;
   /** Absorbed source ids pointing at a surviving canonical card id. */
   aliases: AliasRepository;
+  /**
+   * Run canonical reads and writes in one atomic unit. The callback receives
+   * repositories bound to the transaction; a throw rolls back every write.
+   */
+  transaction<T>(fn: (tx: Repositories) => Promise<T>): Promise<T>;
 }
 
 export function createRepositories(store: DbStore): Repositories {
-  return {
+  const repos: Repositories = {
     evidence: createEvidenceRepository(store),
     marketObservations: createMarketObservationRepository(store),
     cards: createCardRepository(store),
@@ -38,7 +43,11 @@ export function createRepositories(store: DbStore): Repositories {
     jobs: createJobsRepository(store),
     identityDecisions: createIdentityDecisionRepository(store),
     aliases: createAliasRepository(store),
+    transaction<T>(fn: (tx: Repositories) => Promise<T>): Promise<T> {
+      return store.transaction((txStore) => fn(createRepositories(txStore)));
+    },
   };
+  return repos;
 }
 
 export function createDefaultRepositories(): Repositories {

@@ -273,3 +273,86 @@ test('a merge is reversible: the original identity survives and an identity_deci
   assert.equal((await repos.aliases.list()).length, 1);
   assert.equal(repeat.promotion?.duplicates, 1);
 });
+
+// --- Round-1 review fixes -------------------------------------------------
+// Acceptance must mean a fully committed write; a failed decision row must
+// leave no partial canonical state behind.
+
+test('a failed observation write is rejected with promotion errors and no partial commit', async () => {
+  const store = createMemoryStore();
+  const repos = createRepositories(store);
+  const failing: Repositories = {
+    ...repos,
+    marketObservations: {
+      ...repos.marketObservations,
+      async create() {
+        throw new Error('observation table unavailable');
+      },
+    },
+    transaction: async <T>(fn: (tx: Repositories) => Promise<T>): Promise<T> =>
+      store.transaction(() => fn(failing)),
+  };
+
+  const report = await promoteToCanonical(proposal({}, failing));
+  assert.equal(report.accepted, false);
+  assert.equal(report.card, null);
+  assert.equal(report.observation, null);
+  assert.equal(report.identityDecision, null);
+  assert.deepEqual(report.aliases, []);
+  assert.ok(
+    report.errors.some((message) => /observation table unavailable/.test(message)),
+    report.errors.join(', '),
+  );
+  assert.ok(report.reasons.some((reason) => /observation/i.test(reason)), report.reasons.join(', '));
+  assert.equal(report.unpromotedPriced.length, 1);
+  assert.equal(report.promotion?.unpromotedPriced.length, 1);
+
+  assert.equal((await repos.cards.list()).length, 0);
+  assert.equal((await repos.marketObservations.list()).length, 0);
+  assert.equal((await repos.identityDecisions.list()).length, 0);
+  assert.equal((await repos.aliases.list()).length, 0);
+});
+
+test('a failing decision repository rolls back the whole merge and reports no partial commit', async () => {
+  const store = createMemoryStore();
+  const repos = createRepositories(store);
+  const first = await promoteToCanonical(proposal({ sourceId: 'scryfall', externalId: 's-1' }, repos));
+  assert.equal(first.accepted, true);
+  const before = {
+    cards: await repos.cards.list(),
+    observations: await repos.marketObservations.list(),
+    aliases: await repos.aliases.list(),
+    decisions: await repos.identityDecisions.list(),
+  };
+
+  const failing: Repositories = {
+    ...repos,
+    identityDecisions: {
+      ...repos.identityDecisions,
+      async create() {
+        throw new Error('decision row write failed');
+      },
+    },
+    transaction: async <T>(fn: (tx: Repositories) => Promise<T>): Promise<T> =>
+      store.transaction(() => fn(failing)),
+  };
+  const report = await promoteToCanonical(
+    proposal({ sourceId: 'pokemontcg', externalId: 'p-1' }, failing),
+  );
+
+  assert.equal(report.accepted, false);
+  assert.equal(report.decision?.merged, true);
+  assert.equal(report.card, null);
+  assert.equal(report.observation, null);
+  assert.equal(report.identityDecision, null);
+  assert.deepEqual(report.aliases, []);
+  assert.ok(
+    report.errors.some((message) => /decision row write failed/.test(message)),
+    report.errors.join(', '),
+  );
+
+  assert.deepEqual(await repos.cards.list(), before.cards);
+  assert.deepEqual(await repos.marketObservations.list(), before.observations);
+  assert.deepEqual(await repos.aliases.list(), before.aliases);
+  assert.deepEqual(await repos.identityDecisions.list(), before.decisions);
+});

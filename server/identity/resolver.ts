@@ -20,6 +20,7 @@ import {
   promoteCandidates,
   type PromotionResult,
 } from '../ingest/promotion.ts';
+import { sanitizeError } from '../ingest/runner.ts';
 import type { ConfidenceBand, IngestCandidate } from '../ingest/types.ts';
 
 const UNKNOWN = 'UNKNOWN';
@@ -95,12 +96,16 @@ export interface IdentityDecision {
 }
 
 export interface CanonicalWriteReport {
+  /** True only when every expected canonical row (including the decision row
+   * and, for a priced candidate, the observation) committed successfully. */
   accepted: boolean;
   evidenceId: string;
-  /** Validation failures; empty for an accepted proposal. */
+  /** Why the report is not a full commit, or an explicit catalog-only note. */
   reasons: string[];
-  /** Write-path diagnostics from promotion (never validation failures). */
+  /** Promotion diagnostics and any commit failure, sanitised. */
   errors: string[];
+  /** Candidate ids the deterministic promotion guard left without an observation. */
+  unpromotedPriced: string[];
   decision: IdentityDecision | null;
   card: Card | null;
   observation: MarketObservation | null;
@@ -173,6 +178,18 @@ function repositoriesOf(proposal: Proposal): Repositories {
     return injected as Repositories;
   }
   return createDefaultRepositories();
+}
+
+/**
+ * All canonical reads and writes for one proposal run in a single repository
+ * transaction. Bundles built by createRepositories always provide `transaction`;
+ * a legacy injected bundle without it still works but loses atomicity.
+ */
+function runInTransaction<T>(
+  repos: Repositories,
+  fn: (tx: Repositories) => Promise<T>,
+): Promise<T> {
+  return typeof repos.transaction === 'function' ? repos.transaction(fn) : fn(repos);
 }
 
 function decidedAtOf(proposal: Proposal): string {
@@ -371,9 +388,10 @@ export async function resolveCandidate(candidate: FreeFeedRecord): Promise<Ident
   };
 }
 
-/** Validate provenance, write the surviving card once, record the merge as
- * reversible aliases plus an identity_decisions row, then delegate the price
- * observation to the existing deterministic promotion path. */
+/** Validate provenance, then run every canonical write in one transaction.
+ * `accepted` is true only when the card, aliases, decision row and (for a
+ * priced proposal) the observation all committed; any failure rolls the whole
+ * unit back and is reported, never hidden behind a partial success. */
 export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<CanonicalWriteReport> {
   const proposal = candidate as Proposal;
   const repos = repositoriesOf(proposal);
@@ -383,6 +401,7 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
     evidenceId,
     reasons: [],
     errors: [],
+    unpromotedPriced: [],
     decision: null,
     card: null,
     observation: null,
@@ -395,9 +414,6 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
   report.reasons = validateProposal(proposal);
   if (report.reasons.length > 0) return report;
 
-  const decision = await resolveCandidate(candidate);
-  report.decision = decision;
-
   const provenance = {
     source: text(proposal.sourceId),
     basis: proposal.basis,
@@ -409,116 +425,177 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
     license: text(proposal.license),
     attribution: text(proposal.attribution),
   };
-
-  // Surviving card rows are never rewritten; only a new identity is inserted.
-  const existingCard = decision.survivorCardId
-    ? await repos.cards.get(decision.survivorCardId)
-    : (await repos.cards.list({ identityKey: decision.identityKey }))[0] ?? null;
-  const cardFromId = existingCard ?? await repos.cards.get(decision.canonicalId);
-  report.card = cardFromId ?? await repos.cards.upsert({
-    id: decision.canonicalId,
-    name: text(proposal.name),
-    setId: text(proposal.set),
-    cardNumber: text(proposal.number),
-    variant: decision.inputs.variant === UNKNOWN ? null : decision.inputs.variant,
-    identityKey: decision.identityKey,
-    facets: {
-      vertical: text(proposal.vertical),
-      property: text(proposal.property),
-      set: text(proposal.set),
-      number: text(proposal.number),
-      finish: text(proposal.finish),
-      normalizedName: decision.inputs.name,
-      evidenceId,
-      rule: decision.rule,
-      matchSource: decision.matchSource,
-      candidateEvidenceIds: decision.candidateEvidenceIds,
-      ...provenance,
-    },
-    rawPayload: {
-      sourceId: text(proposal.sourceId),
-      externalId: text(proposal.externalId),
-      sourceUrl: text(proposal.sourceUrl),
-      license: text(proposal.license),
-      attribution: text(proposal.attribution),
-    },
-  });
-  const canonicalId = report.card.id;
-
-  // A merge is reversible: the absorbed source ids are aliases (append-only),
-  // and every original identity key is preserved in the decision row.
-  for (const alias of decision.aliases) {
-    report.aliases.push(await repos.aliases.upsert({
-      entityId: canonicalId,
-      alias,
-      source: 'identity-resolver',
-      confidence: CONFIDENCE_SCORE[decision.confidence],
-    }));
-  }
-
   const amount = proposal.amount;
   const priced = typeof amount === 'number' && Number.isFinite(amount) && amount >= 0;
-  if (priced && proposal.basis !== 'UNKNOWN') {
-    const ingestCandidate: IngestCandidate = {
-      evidenceId,
-      targetIdentityRef: canonicalId,
-      basis: proposal.basis,
-      amount,
-      currency: text(proposal.currency),
-      marketplace: null,
-      observedAt: text(proposal.observedAt),
-      status: 'RAW',
-      parseStatus: 'PARSED',
-      warnings: [],
-      sourceId: text(proposal.sourceId),
-      capturedAt: text(proposal.capturedAt),
-      lineage: [...(proposal.lineage as string[])],
-      confidence: proposal.confidence as ConfidenceBand,
-      priceComponents: { ...provenance },
-    };
-    // Reuse the existing, deterministic promotion logic against the canonical
-    // observation repository: no second valuation path, no invented amount.
-    report.promotion = await promoteCandidates({
-      candidates: { list: async () => [ingestCandidate] },
-      marketObservations: repos.marketObservations,
+  const hasPrice = priced && proposal.basis !== 'UNKNOWN';
+
+  try {
+    await runInTransaction(repos, async (tx) => {
+      // Resolve inside the transaction: the surviving id is chosen against
+      // the same state that this commit is about to mutate.
+      const decision = await resolveCandidate(
+        { ...proposal, repositories: tx } as FreeFeedRecord,
+      );
+      report.decision = decision;
+
+      let card: Card | null = null;
+      let observation: MarketObservation | null = null;
+      const aliases: AliasRow[] = [];
+      let decisionRow: IdentityDecisionRow | null = null;
+      let promotion: PromotionResult | null = null;
+
+      // Surviving card rows are never rewritten; only a new identity is inserted.
+      const existingCard = decision.survivorCardId
+        ? await tx.cards.get(decision.survivorCardId)
+        : (await tx.cards.list({ identityKey: decision.identityKey }))[0] ?? null;
+      const cardFromId = existingCard ?? await tx.cards.get(decision.canonicalId);
+      card = cardFromId ?? await tx.cards.upsert({
+        id: decision.canonicalId,
+        name: text(proposal.name),
+        setId: text(proposal.set),
+        cardNumber: text(proposal.number),
+        variant: decision.inputs.variant === UNKNOWN ? null : decision.inputs.variant,
+        identityKey: decision.identityKey,
+        facets: {
+          vertical: text(proposal.vertical),
+          property: text(proposal.property),
+          set: text(proposal.set),
+          number: text(proposal.number),
+          finish: text(proposal.finish),
+          normalizedName: decision.inputs.name,
+          evidenceId,
+          rule: decision.rule,
+          matchSource: decision.matchSource,
+          candidateEvidenceIds: decision.candidateEvidenceIds,
+          ...provenance,
+        },
+        rawPayload: {
+          sourceId: text(proposal.sourceId),
+          externalId: text(proposal.externalId),
+          sourceUrl: text(proposal.sourceUrl),
+          license: text(proposal.license),
+          attribution: text(proposal.attribution),
+        },
+      });
+      const canonicalId = card.id;
+
+      // A merge is reversible: absorbed ids are aliases and every original
+      // identity key is kept in the decision row written below.
+      for (const alias of decision.aliases) {
+        aliases.push(await tx.aliases.upsert({
+          entityId: canonicalId,
+          alias,
+          source: 'identity-resolver',
+          confidence: CONFIDENCE_SCORE[decision.confidence],
+        }));
+      }
+
+      if (hasPrice) {
+        const ingestCandidate: IngestCandidate = {
+          evidenceId,
+          targetIdentityRef: canonicalId,
+          basis: proposal.basis,
+          amount,
+          currency: text(proposal.currency),
+          marketplace: null,
+          observedAt: text(proposal.observedAt),
+          status: 'RAW',
+          parseStatus: 'PARSED',
+          warnings: [],
+          sourceId: text(proposal.sourceId),
+          capturedAt: text(proposal.capturedAt),
+          lineage: [...(proposal.lineage as string[])],
+          confidence: proposal.confidence as ConfidenceBand,
+          priceComponents: { ...provenance },
+        };
+        // Same deterministic promotion path, now bound to the transaction's
+        // observation repository: no second valuation, no invented amount.
+        promotion = await promoteCandidates({
+          candidates: { list: async () => [ingestCandidate] },
+          marketObservations: tx.marketObservations,
+        });
+        report.promotion = promotion;
+        report.errors.push(...promotion.errors);
+        report.unpromotedPriced = [...promotion.unpromotedPriced];
+      }
+
+      const observations = await tx.marketObservations.list({
+        evidenceId,
+        targetIdentityRef: canonicalId,
+        basis: proposal.basis,
+      });
+      observation = observations[0] ?? null;
+
+      if (
+        hasPrice
+        && (!observation
+          || (promotion !== null && promotion.errors.length > 0)
+          || (promotion !== null && promotion.unpromotedPriced.length > 0))
+      ) {
+        const detail = [
+          promotion && promotion.errors.length > 0
+            ? `promotion errors: ${promotion.errors.join('; ')}` : '',
+          promotion && promotion.unpromotedPriced.length > 0
+            ? `unpromoted priced candidates: ${promotion.unpromotedPriced.join(', ')}` : '',
+          !observation ? `no canonical observation was committed for ${evidenceId}` : '',
+        ].filter(Boolean).join('; ');
+        // Throwing rolls back card/alias/decision writes too: a priced
+        // proposal without its observation is never a committed success.
+        throw new Error(`priced candidate ${evidenceId} has no fully committed observation: ${detail}`);
+      }
+      if (!hasPrice) {
+        // Explicit, accepted exception: catalog-only rows have no price fact.
+        report.reasons.push(
+          `catalog-only: amount or basis is UNKNOWN; no price observation written for ${evidenceId}`,
+        );
+      }
+
+      decisionRow = await tx.identityDecisions.create({
+        targetRef: canonicalId,
+        status: decision.merged ? 'MERGED' : 'ACCEPTED',
+        candidates: decision.candidateEvidenceIds.map((item) => ({
+          evidenceId: item,
+          identityKey: decision.identityKey,
+          rule: decision.rule,
+        })),
+        scores: {
+          rule: decision.rule,
+          matchSource: decision.matchSource,
+          inputs: decision.inputs,
+          identityKey: decision.identityKey,
+          confidence: decision.confidence,
+          basis: proposal.basis,
+          currency: text(proposal.currency),
+          observedAt: text(proposal.observedAt),
+          capturedAt: text(proposal.capturedAt),
+          lineage: [...(proposal.lineage as string[])],
+          tieBreak: decision.tieBreak,
+          aliases: decision.aliases,
+          originalIdentityKeys: decision.originalIdentityKeys,
+        },
+        votes: [],
+        contradictions: [],
+        createdAt: decision.decidedAt,
+      });
+
+      // Publish canonical artifacts only after every row write succeeded.
+      report.card = card;
+      report.observation = observation;
+      report.aliases = aliases;
+      report.identityDecision = decisionRow;
     });
-    report.errors.push(...report.promotion.errors);
+  } catch (error) {
+    const message = sanitizeError(error);
+    report.accepted = false;
+    report.errors.push(message);
+    report.reasons.push(`canonical commit failed for ${evidenceId}: ${message}`);
+    // Diagnostics stay visible; no rolled-back row is reported as canonical.
+    report.card = null;
+    report.observation = null;
+    report.aliases = [];
+    report.identityDecision = null;
+    return report;
   }
-
-  const observations = await repos.marketObservations.list({
-    evidenceId,
-    targetIdentityRef: canonicalId,
-    basis: proposal.basis,
-  });
-  report.observation = observations[0] ?? null;
-
-  report.identityDecision = await repos.identityDecisions.create({
-    targetRef: canonicalId,
-    status: decision.merged ? 'MERGED' : 'ACCEPTED',
-    candidates: decision.candidateEvidenceIds.map((item) => ({
-      evidenceId: item,
-      identityKey: decision.identityKey,
-      rule: decision.rule,
-    })),
-    scores: {
-      rule: decision.rule,
-      matchSource: decision.matchSource,
-      inputs: decision.inputs,
-      identityKey: decision.identityKey,
-      confidence: decision.confidence,
-      basis: proposal.basis,
-      currency: text(proposal.currency),
-      observedAt: text(proposal.observedAt),
-      capturedAt: text(proposal.capturedAt),
-      lineage: [...(proposal.lineage as string[])],
-      tieBreak: decision.tieBreak,
-      aliases: decision.aliases,
-      originalIdentityKeys: decision.originalIdentityKeys,
-    },
-    votes: [],
-    contradictions: [],
-    createdAt: decision.decidedAt,
-  });
 
   report.accepted = true;
   return report;
