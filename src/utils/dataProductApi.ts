@@ -19,6 +19,8 @@ export const ROUTES = {
   comps: '/api/comps/:id',
   market: '/api/market/:id',
   harvestLegacy: '/api/intelligence/harvest-legacy',
+  freeFeeds: '/api/ingest/free-feeds',
+  freeFeedsHarvest: '/api/ingest/free-feeds/:sourceId/harvest',
   activeReport: '/api/intelligence/active-report',
   discoverySweep: '/api/intelligence/discovery-sweep',
   findings: '/api/intelligence/findings',
@@ -97,6 +99,62 @@ export async function postEnvelope<T>(
 /** Typed read of the real, evidence-backed active trading report. */
 export function fetchActiveReport(): Promise<ApiEnvelope<ActiveReport>> {
   return fetchEnvelope<ActiveReport>(ROUTES.activeReport);
+}
+
+// --- Free catalog feeds -----------------------------------------------------
+// Local mirrors of the operator-only metadata returned by the ingest router.
+// Browser code never imports server modules; no key value or environment
+// value is ever part of these shapes.
+
+export interface FreeFeedView {
+  sourceId: string;
+  vertical: string;
+  license: string;
+  attribution: string;
+  attributionRequired: boolean;
+  rateLimitMs: number;
+  enabled: boolean;
+  dailyRequestLimit?: number;
+}
+
+export interface FreeFeedsResponse {
+  feeds: FreeFeedView[];
+}
+
+export interface FreeFeedHarvestCounts {
+  fetched: number;
+  created: number;
+  duplicates: number;
+  failed: number;
+  candidates: number;
+}
+
+export interface FreeFeedHarvestResponse {
+  sourceId: string;
+  license: string;
+  attribution: string;
+  status: string;
+  runId: string;
+  capturedAt: string;
+  counts: FreeFeedHarvestCounts;
+  errors: string[];
+  adapterMeta: {
+    requestsIssued: number;
+    dailyRequestsIssued: number;
+    dailyCapReached: boolean;
+    skipped: string | null;
+  };
+}
+
+export function fetchFreeFeeds(): Promise<ApiEnvelope<FreeFeedsResponse>> {
+  return fetchEnvelope<FreeFeedsResponse>(ROUTES.freeFeeds);
+}
+
+export function harvestFreeFeed(
+  sourceId: string,
+  capturedAt?: string
+): Promise<ApiEnvelope<FreeFeedHarvestResponse>> {
+  return postEnvelope<FreeFeedHarvestResponse>(buildRoute(ROUTES.freeFeedsHarvest, { sourceId }), capturedAt ? { capturedAt } : {});
 }
 
 // --- Web source review queue -------------------------------------------------

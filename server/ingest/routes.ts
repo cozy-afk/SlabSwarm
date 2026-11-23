@@ -14,6 +14,13 @@ import {
 } from './adapters/legacy.ts';
 import { createTcgapisAdapter } from './adapters/tcgapis.ts';
 import {
+  CARDEX_DAILY_REQUEST_LIMIT,
+  createFreeFeedAdapter,
+  type FreeFeedFetchImpl,
+} from './adapters/freeCatalog.ts';
+import { FREE_FEEDS, getFreeFeed } from './freeFeeds.ts';
+import type { FreeFeedConfig } from '../contracts/freeFeed.ts';
+import {
   createWebSourceAdapter,
   harvestWebSources,
   type WebFetchImpl,
@@ -34,18 +41,52 @@ const INGEST_WARNINGS = [
   'Missing prices, shipping, fees, grade and condition stay UNKNOWN, never zero.',
 ];
 
+/** Free-feed-only warnings: catalog/price-guide data is never a SOLD comp. */
+const FREE_FEED_WARNINGS = [
+  'Free feed records are catalog or GUIDE proposals with explicit basis; never SOLD sales evidence.',
+  'License and attribution are preserved verbatim; a feed without a license is disabled.',
+  'Keys stay server-side. Public metadata exposes no key or environment value.',
+];
+
+/** Human-readable attribution for the public feed list. Mirrors the adapter's
+ * deterministic mapping; no key material or environment value is included. */
+const FREE_FEED_ATTRIBUTION: Record<string, string> = {
+  scryfall: 'Scryfall API (scryfall.com); card data (c) Wizards of the Coast',
+  pokemontcg: 'Pokemon TCG API (pokemontcg.io)',
+  carddex: 'CardDex API (carddex.io) - attribution required by license',
+  cardex: 'Cardex public catalog (cardex.com)',
+};
+
+/** Project a frozen feed config onto operator-safe public metadata. Only the
+ * config's own fields are used; no environment value is ever read here. */
+function publicFreeFeed(config: FreeFeedConfig) {
+  return {
+    sourceId: config.sourceId,
+    vertical: config.vertical,
+    license: config.license,
+    attribution: FREE_FEED_ATTRIBUTION[config.sourceId] ?? `${config.sourceId} public catalog`,
+    attributionRequired: config.attributionRequired,
+    rateLimitMs: config.rateLimitMs,
+    enabled: config.license.trim() !== '',
+    ...(config.sourceId === 'cardex'
+      ? { dailyRequestLimit: CARDEX_DAILY_REQUEST_LIMIT }
+      : {}),
+  };
+}
+
 function respond<T>(
   res: Response,
   status: number,
   data: T,
   legacy: Record<string, unknown> = {},
+  extraWarnings: string[] = [],
 ): void {
   res.status(status).json({
     ...legacy,
     ...envelope(data, newContext(), {
       basis: UNKNOWN,
       currency: UNKNOWN,
-      warnings: INGEST_WARNINGS,
+      warnings: [...INGEST_WARNINGS, ...extraWarnings],
     }),
   });
 }
@@ -89,6 +130,13 @@ export interface IngestRouterOptions {
     fetchImpl?: WebFetchImpl;
     now?: () => number;
   };
+  /** Free feeds are keyless by default. Tests inject the fetch so a harvest
+   * never makes a live third-party call; production falls back to global fetch
+   * inside the adapter. An optional env map stays strictly server-side. */
+  freeFeeds?: {
+    fetchImpl?: FreeFeedFetchImpl;
+    env?: Record<string, unknown>;
+  };
 }
 
 export function createIngestRouter(
@@ -101,6 +149,16 @@ export function createIngestRouter(
   const webRegistry = new WebSourceRegistry({ sources: options.web?.sources ?? [] });
   const webFetch: WebFetchImpl =
     options.web?.fetchImpl ?? (globalThis.fetch as unknown as WebFetchImpl);
+  // The adapter decides whether to call; tests inject fetchImpl so no live
+  // third-party request can be issued from a test process.
+  const freeFetch: FreeFeedFetchImpl =
+    options.freeFeeds?.fetchImpl ?? (globalThis.fetch as unknown as FreeFeedFetchImpl);
+  const freeFeedEnv = options.freeFeeds?.env;
+  // One adapter per feed: Cardex's daily request counter must survive across
+  // separate harvest requests within the same process.
+  const freeFeedAdapters = new Map(
+    FREE_FEEDS.map((config) => [config.sourceId, createFreeFeedAdapter(config)]),
+  );
   const registry = new AdapterRegistry([
     // No path captured here: the adapter resolves SLABGRAPH_DATA_DIR on each fetch.
     createLegacyAdapter({}),
@@ -137,6 +195,61 @@ export function createIngestRouter(
   router.get('/api/ingest/adapters', (_req, res) => {
     const adapters = registry.list().map((adapter) => adapter.id);
     respond(res, 200, adapters, { adapters });
+  });
+
+  // Free public catalog feeds (Task 3) -------------------------------------
+  // Public metadata only. The frozen configs carry no key material; the
+  // optional env map is passed to the adapter's fetch options, never to data.
+  router.get('/api/ingest/free-feeds', (_req, res) => {
+    const feeds = FREE_FEEDS.map(publicFreeFeed);
+    const data = { feeds };
+    respond(res, 200, data, data, FREE_FEED_WARNINGS);
+  });
+
+  router.post('/api/ingest/free-feeds/:sourceId/harvest', async (req, res) => {
+    const config = getFreeFeed(req.params.sourceId);
+    if (!config || !freeFeedAdapters.has(config.sourceId)) {
+      notFound(res, 'free feed');
+      return;
+    }
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body as Record<string, unknown>
+      : {};
+    const capturedAt = typeof body.capturedAt === 'string' && Number.isFinite(Date.parse(body.capturedAt))
+      ? body.capturedAt
+      : new Date().toISOString();
+    // Failures are captured in the run record, not thrown at the caller: the
+    // view can surface the counts and the plain-text errors deterministically.
+    const result = await runIngest(freeFeedAdapters.get(config.sourceId)!, repos, {
+      mode: 'backfill',
+      capturedAt,
+      options: { fetchImpl: freeFetch, ...(freeFeedEnv ? { env: freeFeedEnv } : {}) },
+    });
+    const { counts } = result.run;
+    const meta = result.run.meta ?? {};
+    const data = {
+      sourceId: config.sourceId,
+      license: config.license,
+      attribution: publicFreeFeed(config).attribution,
+      status: result.run.status,
+      runId: result.run.id,
+      capturedAt,
+      counts: {
+        fetched: counts.fetched,
+        created: counts.created,
+        duplicates: counts.duplicates,
+        failed: counts.failed,
+        candidates: counts.candidates,
+      },
+      errors: result.run.errors.map((error) => error.message),
+      adapterMeta: {
+        requestsIssued: meta.requestsIssued ?? 0,
+        dailyRequestsIssued: meta.dailyRequestsIssued ?? 0,
+        dailyCapReached: meta.dailyCapReached === true,
+        skipped: typeof meta.skipped === 'string' ? meta.skipped : null,
+      },
+    };
+    respond(res, 200, data, data, FREE_FEED_WARNINGS);
   });
 
   // Manual notes -----------------------------------------------------------
