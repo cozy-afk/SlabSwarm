@@ -7,7 +7,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { EvidencePacket } from './tools.ts';
+import type { EvidenceItem, EvidencePacket } from './tools.ts';
 
 export const ROLES = [
   'ingest_triage',
@@ -37,9 +37,20 @@ export interface RoleClaim {
   confidence: Confidence;
 }
 
+/** Structured claim emitted for a web-derived evidence item. Always a proposal. */
+export interface WebScoutClaim extends RoleClaim {
+  provenance: 'WEB';
+  webDerived: true;
+  source: string;
+  observed_at: string;
+  basis: string;
+  citations: string[];
+  status: 'PROPOSAL';
+}
+
 export interface Proposal {
   id: string;
-  type: 'ALIAS' | 'FACTOR' | 'FORECAST';
+  type: 'ALIAS' | 'FACTOR' | 'FORECAST' | 'WEB_CANDIDATE';
   status: 'PROPOSED' | 'HYPOTHESIS';
   targetId: string;
   evidenceIds: string[];
@@ -70,6 +81,30 @@ function assertCited(packet: EvidencePacket, ids: string[]): void {
 
 function claim(text: string, ids: string[], confidence: Confidence): RoleClaim {
   return { text, evidenceIds: [...ids].sort(), confidence };
+}
+
+/** Web packets are tagged by the deterministic tool layer; never guess from price. */
+export function isWebDerived(item: EvidenceItem): boolean {
+  const kind = String(item.kind ?? '').toLowerCase();
+  const source = String(item.source ?? '').toLowerCase();
+  return kind === 'web' || kind === 'web-candidate' || kind === 'web_candidate' ||
+    source.startsWith('web:') || source.startsWith('web-') || source.startsWith('web_');
+}
+
+function webClaim(item: EvidenceItem): WebScoutClaim {
+  const basis = String(item.basis ?? 'UNKNOWN');
+  return {
+    text: `Web PROPOSAL (hypothesis, not a fact) ${item.id}: source=${item.source} observed_at=${item.observedAt} basis=${basis}`,
+    evidenceIds: [item.id],
+    confidence: item.confidence,
+    provenance: 'WEB',
+    webDerived: true,
+    source: String(item.source ?? 'UNKNOWN'),
+    observed_at: String(item.observedAt ?? 'UNKNOWN'),
+    basis,
+    citations: [item.id],
+    status: 'PROPOSAL',
+  };
 }
 
 /** Deterministic role execution — no network, no model, no canonical writes. */
@@ -106,11 +141,27 @@ export function runRole(role: RoleName, packet: EvidencePacket, options: RoleOpt
         };
       }
       break;
-    case 'evidence_scout':
-      claims = items.map((i) =>
-        cite(`Evidence ${i.id} from ${i.source} observed ${i.observedAt}`, [i.id], i.confidence),
-      );
-      if (items[0]) {
+    case 'evidence_scout': {
+      const webItems = items.filter(isWebDerived);
+      claims = items.map((i) => isWebDerived(i)
+        ? webClaim(i)
+        : cite(`Evidence ${i.id} from ${i.source} observed ${i.observedAt}`, [i.id], i.confidence));
+      const web = webItems[0];
+      if (web) {
+        proposal = {
+          id: `proposal-web-${web.id}`,
+          type: 'WEB_CANDIDATE',
+          status: 'HYPOTHESIS',
+          targetId: web.id,
+          evidenceIds: [web.id],
+          source: String(web.source ?? 'UNKNOWN'),
+          observed_at: String(web.observedAt ?? 'UNKNOWN'),
+          basis: String(web.basis ?? 'UNKNOWN'),
+          confidence: web.confidence,
+          citations: [web.id],
+          provenance: 'WEB',
+        };
+      } else if (items[0]) {
         proposal = {
           id: `proposal-factor-${items[0].id}`,
           type: 'FACTOR',
@@ -121,6 +172,7 @@ export function runRole(role: RoleName, packet: EvidencePacket, options: RoleOpt
         };
       }
       break;
+    }
     case 'market_modeler': {
       const sold = items.filter((i) => i.basis === 'SOLD');
       claims = sold.length
