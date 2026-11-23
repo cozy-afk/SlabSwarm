@@ -87,7 +87,7 @@ Canonical schema additions:
 
 Vertical-specific required facts live in validated `facets` profiles: TCG requires set code, card number, rarity and finish; sports requires sport, league, team-on-card, season and print run; comics requires publisher, series, volume, issue number as a string, variant description, and both cover date and on-sale date [1][19][27]. Condition and grade remain separate axes [44].
 
-API surface stays one `/api/catalog` with a `vertical` filter and typed facets, not three separate catalogs. Errors use problem+json, rate limits return 429 with Retry-After, and future customer keys identify a project for quota rather than acting as authorization alone [58][59][61][62].
+API surface stays one `/api/catalog` with a `vertical` filter and typed facets, not three separate catalogs. Errors use problem+json and rate limits return 429 with Retry-After [58][59][61]. Future customer keys identify a project for quota rather than acting as authorization alone [62].
 
 ### 1. Canonical read layer
 

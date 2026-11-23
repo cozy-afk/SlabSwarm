@@ -40,7 +40,7 @@ Design consequence: our `{data,meta}` envelope is close. Add problem+json errors
 
 ## Access and licensing reality
 
-Several useful sources are closed, gated or legally restricted: TCGplayer no longer grants new access [11], Cardmarket docs were unreachable [16], eBay sold data is limited release [25], and PriceCharting redistribution needs a commercial licence [24]. Populate our own database from sources we can legally use, and record licence on every evidence row.
+Several useful sources are closed, gated or legally restricted: TCGplayer no longer grants new access [11], Cardmarket docs were unreachable [16], and eBay sold data is limited release [25]. PriceCharting redistribution needs a commercial licence [24]. Populate our own database from sources we can legally use, and record licence on every evidence row.
 
 Sources:
 [1] https://docs.pokemontcg.io/api-reference/sets/set-object — Pokemon TCG API - set object
