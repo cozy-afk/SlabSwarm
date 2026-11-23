@@ -21,6 +21,8 @@ import { createDefaultRepositories } from './server/db/repositories/index.ts';
 import type { Repositories } from './server/db/repositories/index.ts';
 import { createMatchReviewQueue, type MatchReviewQueue } from './server/identity/qaQueue.ts';
 import { mountMatchReviewRouter } from './server/identity/qaRoutes.ts';
+import { mountTrackingRouter } from './server/portfolio/trackingRoutes.ts';
+import { createTrackingStore, type TrackingStore } from './server/portfolio/trackingStore.ts';
 import { createIngestRouter } from './server/ingest/routes.ts';
 import { createDurableRepositories } from './server/ingest/store.ts';
 import { setActiveReportRepositories } from './server/intelligence/active-report.ts';
@@ -174,6 +176,8 @@ export interface CreateAppOptions {
   matchQaStore?: MatchReviewQueue;
   matchQaRepositories?: Repositories;
   matchQaFloor?: number;
+  /** Task 17: inject the in-process tracking store; routes stay behind the gate. */
+  trackingStore?: TrackingStore;
 }
 
 // Build the Express application with all routes. Exported so API tests can
@@ -269,6 +273,20 @@ export async function createApp(options: CreateAppOptions = {}) {
   // listener, firewall/DNS change, or model-driven identity decision.
   app.use('/api/qa', operatorAuth.requireAuth);
   mountMatchReviewRouter(app, { store: matchQaStore });
+
+  // Task 17: watchlist, alerts and portfolio use the same operator gate and
+  // the same first-party ledger as serving/FMV. No new listener, firewall/DNS
+  // change, notification provider or canonical write is introduced.
+  app.use('/api/tracking', operatorAuth.requireAuth);
+  mountTrackingRouter(app, {
+    store: options.trackingStore ?? createTrackingStore(),
+    ledger: {
+      evidence: { get: (id) => dataRepositories.evidence.get(id) },
+      marketObservations: { list: () => dataRepositories.marketObservations.list() },
+    },
+    engine: graphEngine,
+  });
+
   app.get('/api/admin/web-harvest/lake-export', operatorAuth.requireAuth, (_req, res) => {
     res.json(envelope({ last: lastHarvestExport.record }, newContext(() => new Date()), {
       basis: UNKNOWN as MarketBasis,

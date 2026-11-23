@@ -3,6 +3,7 @@ import {
   Activity,
   BarChart3,
   Bot,
+  Briefcase,
   Database,
   FileText,
   Globe,
@@ -26,6 +27,7 @@ import { MatchReviewView } from './components/product/MatchReviewView.tsx';
 import { ResearchSwarmView } from './components/product/ResearchSwarmView.tsx';
 import { SourcesView } from './components/product/SourcesView.tsx';
 import { SqlLabView } from './components/product/SqlLabView.tsx';
+import { TrackingView } from './components/product/TrackingView.tsx';
 import { WebSourcesView } from './components/product/WebSourcesView.tsx';
 import type { SwarmRoutingConfig } from './types/graph.ts';
 import { apiFetch } from './utils/apiClient.ts';
@@ -35,6 +37,7 @@ type ActiveTab =
   | 'web-sources'
   | 'match-qa'
   | 'catalog'
+  | 'tracking'
   | 'intelligence'
   | 'active-report'
   | 'swarm'
@@ -72,6 +75,12 @@ const NAV_ITEMS: Array<{
     label: 'Catalog',
     sublabel: 'Identity & Printings',
     icon: Search,
+  },
+  {
+    id: 'tracking',
+    label: 'Tracking',
+    sublabel: 'Watchlist, Alerts & Portfolio',
+    icon: Briefcase,
   },
   {
     id: 'intelligence',
@@ -157,6 +166,8 @@ export default function App() {
         return <MatchReviewView />;
       case 'catalog':
         return <CatalogView />;
+      case 'tracking':
+        return <TrackingView />;
       case 'intelligence':
         return <MarketIntelligenceView />;
       case 'active-report':
