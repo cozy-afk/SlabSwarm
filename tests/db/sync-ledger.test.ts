@@ -75,6 +75,25 @@ test('sync writes evidence, ledger-derived cards and observations to Postgres re
   assert.equal((await repos.marketObservations.list()).length, 1);
 });
 
+test('SQL-backed rows return timestamps as ISO strings on reuse', async () => {
+  const store = createMemoryStore();
+  await store.insert('cards', {
+    id: 'existing-card',
+    name: 'Old name',
+    identityKey: 'tcg:existing',
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    setId: null,
+    cardNumber: null,
+    variant: null,
+    facets: null,
+    rawPayload: null,
+  });
+  const repos = createRepositories(store);
+  const card = await repos.cards.upsert({ name: 'New name', identityKey: 'tcg:existing' });
+  assert.equal(card.createdAt, '2026-01-01T00:00:00.000Z');
+  assert.equal(card.name, 'New name');
+});
+
 test('sync is idempotent and skips observation rows without an evidence id', async () => {
   const repos = createRepositories(createMemoryStore());
   await syncLedgerToPostgres(repos, { evidence, observations });

@@ -1,6 +1,7 @@
 /** Canonical card identity with JSONB facets and raw payloads. */
 
 import { randomUUID } from 'node:crypto';
+import { reusedIso } from './dates.ts';
 import type { DbStore, Row } from '../store.ts';
 import { requireNonEmpty } from '../validation.ts';
 
@@ -62,7 +63,7 @@ export function createCardRepository(store: DbStore): CardRepository {
       requireNonEmpty(input.name, 'name');
       requireNonEmpty(input.identityKey, 'identityKey');
       const [existing] = await store.findAll(TABLE, { identityKey: input.identityKey });
-      const row = toRow(input, String(existing?.id ?? input.id ?? randomUUID()), String(existing?.createdAt ?? new Date().toISOString()), existing);
+      const row = toRow(input, String(existing?.id ?? input.id ?? randomUUID()), reusedIso(existing?.createdAt), existing);
       return (await store.upsert(TABLE, row, CONFLICT_KEYS)) as unknown as Card;
     },
   };

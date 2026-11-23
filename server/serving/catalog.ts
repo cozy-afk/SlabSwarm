@@ -305,6 +305,14 @@ function identityFacetScore(row: LedgerEvidenceRow): number {
   return IDENTITY_FACET_KEYS.filter((key) => payloadText(payload, key) !== UNKNOWN).length;
 }
 
+function catalogKindRank(row: LedgerEvidenceRow): number {
+  const payload = row.parsedPayload ?? {};
+  const kind = String(payload.recordKind ?? '').toUpperCase();
+  if (kind.includes('CATALOG')) return 3;
+  if (row.sourceId === 'tcgapis') return 2;
+  return 1;
+}
+
 /** Pick the evidence row that best documents this id, deterministically. */
 export function findLedgerIdentityEvidence(
   rows: LedgerEvidenceRow[],
@@ -316,7 +324,11 @@ export function findLedgerIdentityEvidence(
     const ref = payload.targetIdentityRef;
     return typeof ref === 'string' && payloadRefMatches(ref, id);
   });
-  matches.sort((a, b) => identityFacetScore(b) - identityFacetScore(a) || a.id.localeCompare(b.id));
+  matches.sort((a, b) =>
+    identityFacetScore(b) - identityFacetScore(a) ||
+    catalogKindRank(b) - catalogKindRank(a) ||
+    String(a.sourceId ?? '').localeCompare(String(b.sourceId ?? '')) ||
+    a.id.localeCompare(b.id));
   return matches[0] ?? null;
 }
 

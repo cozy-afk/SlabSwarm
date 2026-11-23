@@ -1,6 +1,7 @@
 /** First-party market observations with explicit basis and UNKNOWN-preserving components. */
 
 import { randomUUID } from 'node:crypto';
+import { reusedIso } from './dates.ts';
 import type { MarketObservation, MarketObservationInput } from '../../contracts/dataProduct.ts';
 import type { DbStore, Row } from '../store.ts';
 import { assertBasis, requireFiniteAmount, requireNonEmpty } from '../validation.ts';
@@ -26,12 +27,12 @@ function toRow(input: MarketObservationInput, id: string, existing?: Row): Row {
     currency: input.currency,
     marketplace: input.marketplace ?? null,
     observedAt: input.observedAt,
-    capturedAt: existing?.capturedAt ?? new Date().toISOString(),
+    capturedAt: reusedIso(existing?.capturedAt),
     priceComponents: input.priceComponents ?? null,
     status: input.status ?? existing?.status ?? 'RAW',
     confidence: (input as unknown as Row).confidence ?? null,
     lineage: existing?.lineage ?? { evidenceId: input.evidenceId, targetIdentityRef: input.targetIdentityRef },
-    createdAt: existing?.createdAt ?? new Date().toISOString(),
+    createdAt: reusedIso(existing?.createdAt),
   };
 }
 

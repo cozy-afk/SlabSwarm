@@ -1,6 +1,7 @@
 /** Immutable evidence ledger. Corrections append; upserts only update derived fields. */
 
 import { randomUUID } from 'node:crypto';
+import { reusedIso } from './dates.ts';
 import type { EvidenceRecord, EvidenceRecordInput } from '../../contracts/dataProduct.ts';
 import type { DbStore, Row } from '../store.ts';
 import { requireNonEmpty } from '../validation.ts';
@@ -67,7 +68,7 @@ export function createEvidenceRepository(store: DbStore): EvidenceRepository {
         // Raw fields are immutable: keep the original source and checksum values.
         for (const key of CONFLICT_KEYS) next[key] = existing[key];
         next.parseStatus = existing.parseStatus;
-        next.createdAt = existing.createdAt;
+        next.createdAt = reusedIso(existing.createdAt);
       }
       return (await store.upsert(TABLE, next, CONFLICT_KEYS)) as unknown as EvidenceRecord;
     },
