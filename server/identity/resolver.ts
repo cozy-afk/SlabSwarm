@@ -21,6 +21,11 @@ import {
   type PromotionResult,
 } from '../ingest/promotion.ts';
 import { sanitizeError } from '../ingest/runner.ts';
+import {
+  assessMatch,
+  type ExpectedAttributes,
+  type MatchAssessment,
+} from './matchGate.ts';
 import type { ConfidenceBand, IngestCandidate } from '../ingest/types.ts';
 
 const UNKNOWN = 'UNKNOWN';
@@ -48,6 +53,17 @@ interface Proposal extends FreeFeedRecord {
   repositories?: unknown;
   /** Deterministic audit timestamp for tests; defaults to the wall clock. */
   now?: unknown;
+  /** Noisy listing title, when this proposal came from a marketplace listing. */
+  title?: unknown;
+  /** Source-provided hard-attribute expectations for the title. */
+  expectedAttributes?: unknown;
+  /** Numeric confidence floor override for this proposal. */
+  confidenceFloor?: unknown;
+  /**
+   * Host-injected QA correction id. Only the internal review store may set it
+   * after a human APPROVE; a model or a public caller never supplies it.
+   */
+  qaOverride?: unknown;
 }
 
 export type IdentityRule =
@@ -112,6 +128,8 @@ export interface CanonicalWriteReport {
   aliases: AliasRow[];
   identityDecision: IdentityDecisionRow | null;
   promotion: PromotionResult | null;
+  /** Hard-attribute match assessment; null for records with no listing title. */
+  quarantine: MatchAssessment | null;
 }
 
 function text(value: unknown): string {
@@ -408,10 +426,45 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
     aliases: [],
     identityDecision: null,
     promotion: null,
+    quarantine: null,
   };
 
+  // --- Task 16 hard-attribute gate -----------------------------------------
+  // Only listing-title proposals enter this gate, so existing canonical facts
+  // keep their identity rules unchanged. A below-floor match is quarantined
+  // before any card, alias, decision or price observation can be written.
+  let qaCorrectionId: string | null = null;
+  if (typeof proposal.title === 'string' && proposal.title.trim() !== '') {
+    const assessment = assessMatch({
+      title: proposal.title,
+      expected: proposal.expectedAttributes as ExpectedAttributes | undefined,
+      floor: typeof proposal.confidenceFloor === 'number'
+        ? proposal.confidenceFloor
+        : undefined,
+    });
+    report.quarantine = assessment;
+    if (assessment.decision === 'QUARANTINE') {
+      const override = proposal.qaOverride;
+      // Only a syntactically real correction id from the internal review store
+      // can release a quarantine; a caller cannot spoof the override seam.
+      qaCorrectionId = typeof override === 'string'
+        && /^qa-cor-[0-9a-f]{16}$/.test(override)
+        ? override
+        : null;
+      if (!qaCorrectionId) {
+        report.reasons.push(
+          `QUARANTINED: hard-attribute match scored ${assessment.score} below floor `
+          + `${assessment.floor} (${assessment.reasons.join(', ')}); no canonical write`,
+        );
+        return report;
+      }
+      // The override authority is recorded on the identity decision below;
+      // `reasons` is reserved for validation/commit failures.
+    }
+  }
+
   // Nothing is written until every canonical provenance field is present.
-  report.reasons = validateProposal(proposal);
+  report.reasons.push(...validateProposal(proposal));
   if (report.reasons.length > 0) return report;
 
   const provenance = {
@@ -491,6 +544,9 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
       }
 
       if (hasPrice) {
+        const hardDisposition = report.quarantine
+          ? (qaCorrectionId ? 'QA_APPROVED' : report.quarantine.decision)
+          : null;
         const ingestCandidate: IngestCandidate = {
           evidenceId,
           targetIdentityRef: canonicalId,
@@ -506,7 +562,15 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
           capturedAt: text(proposal.capturedAt),
           lineage: [...(proposal.lineage as string[])],
           confidence: proposal.confidence as ConfidenceBand,
-          priceComponents: { ...provenance },
+          priceComponents: {
+            ...provenance,
+            ...(report.quarantine ? {
+              hardAttributeDisposition: hardDisposition,
+              hardAttributeScore: report.quarantine.score,
+              hardAttributeConflicts: report.quarantine.conflicts,
+              ...(qaCorrectionId ? { qaCorrectionId } : {}),
+            } : {}),
+          },
         };
         // Same deterministic promotion path, now bound to the transaction's
         // observation repository: no second valuation, no invented amount.
@@ -572,6 +636,11 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
           tieBreak: decision.tieBreak,
           aliases: decision.aliases,
           originalIdentityKeys: decision.originalIdentityKeys,
+          ...(report.quarantine ? {
+            hardAttributes: report.quarantine,
+            hardAttributeDisposition: qaCorrectionId ? 'QA_APPROVED' : report.quarantine.decision,
+          } : {}),
+          ...(qaCorrectionId ? { qaCorrectionId } : {}),
         },
         votes: [],
         contradictions: [],

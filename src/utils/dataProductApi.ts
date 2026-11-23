@@ -39,6 +39,9 @@ export const ROUTES = {
   webHarvestQueue: '/api/web-harvest/review-queue',
   webHarvestCandidates: '/api/web-harvest/candidates',
   webHarvestReview: '/api/web-harvest/review',
+  matchQueue: '/api/qa/match-queue',
+  matchReview: '/api/qa/match-review',
+  matchCorrections: '/api/qa/match-corrections',
 } as const;
 
 /** Substitute route tokens without ever emitting an unencoded value. */
@@ -261,6 +264,124 @@ export function reviewWebCandidate(
   note?: string
 ): Promise<ApiEnvelope<WebHarvestReviewResponse>> {
   return postEnvelope<WebHarvestReviewResponse>(ROUTES.webHarvestReview, { candidateId, action, note });
+}
+
+// --- Internal match QA (Task 16) ------------------------------------------
+// Deterministic hard-attribute quarantine and operator review. The browser
+// never decides identity and never imports server code; it only displays the
+// server's assessment and the append-only correction provenance.
+
+export type MatchStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type MatchAction = 'APPROVE' | 'REJECT';
+
+export interface MatchAttributeView {
+  name: 'gradingCompany' | 'numericGrade' | 'certNumber' | 'serialRun' | 'cardNumber';
+  value: string;
+  raw: string;
+  start: number;
+  end: number;
+  confidence: number;
+  source: 'TITLE';
+}
+
+export interface MatchHardAttributesView {
+  gradingCompany: string | null;
+  numericGrade: string | null;
+  certNumber: string | null;
+  serialRun: string | null;
+  cardNumber: string | null;
+  attributes: MatchAttributeView[];
+  warnings: string[];
+}
+
+export interface MatchAssessmentView {
+  decision: 'ACCEPT' | 'QUARANTINE';
+  score: number;
+  floor: number;
+  titlePresent: boolean;
+  attributes: MatchHardAttributesView;
+  matched: string[];
+  conflicts: string[];
+  missing: string[];
+  reasons: string[];
+}
+
+export interface MatchProvenanceView {
+  evidenceId: string;
+  source: string;
+  basis: string;
+  currency: string;
+  observedAt: string;
+  capturedAt: string;
+  lineage: string[];
+  confidence: string;
+  license: string;
+  attribution: string;
+}
+
+export interface MatchCandidateView {
+  id: string;
+  evidenceId: string;
+  title: string;
+  status: MatchStatus;
+  enqueuedAt: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+  assessment: MatchAssessmentView;
+  provenance: MatchProvenanceView;
+  proposal: Record<string, unknown>;
+}
+
+export interface MatchCorrectionView {
+  id: string;
+  candidateId: string;
+  evidenceId: string;
+  action: MatchAction;
+  reviewer: string;
+  note: string | null;
+  decidedAt: string;
+  previousCorrectionId: string | null;
+  provenance: MatchProvenanceView;
+  assessment: {
+    decision: string;
+    score: number;
+    floor: number;
+    conflicts: string[];
+    reasons: string[];
+  };
+  canonical: Record<string, unknown> | null;
+}
+
+export interface MatchQueueResponse {
+  candidates: MatchCandidateView[];
+  counts: Record<MatchStatus, number>;
+}
+
+export interface MatchReviewResponse {
+  candidate: MatchCandidateView;
+  correction: MatchCorrectionView;
+  canonical: Record<string, unknown> | null;
+}
+
+export interface MatchCorrectionsResponse {
+  corrections: MatchCorrectionView[];
+}
+
+export function fetchMatchQueue(status?: MatchStatus): Promise<ApiEnvelope<MatchQueueResponse>> {
+  return fetchEnvelope<MatchQueueResponse>(withQuery(ROUTES.matchQueue, { status }));
+}
+
+export function fetchMatchCorrections(candidateId?: string): Promise<ApiEnvelope<MatchCorrectionsResponse>> {
+  return fetchEnvelope<MatchCorrectionsResponse>(withQuery(ROUTES.matchCorrections, { candidateId }));
+}
+
+export function reviewMatchCandidate(
+  candidateId: string,
+  action: MatchAction,
+  reviewer: string,
+  note?: string
+): Promise<ApiEnvelope<MatchReviewResponse>> {
+  return postEnvelope<MatchReviewResponse>(ROUTES.matchReview, { candidateId, action, reviewer, note });
 }
 
 export interface EnvelopeState<T> {
