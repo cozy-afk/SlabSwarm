@@ -112,7 +112,10 @@ function fromDb(table: string, row: Row): Row {
   if (!meta) return { ...row };
   const out: Row = {};
   for (const [dbName, value] of Object.entries(row)) {
-    out[meta.byDbName.get(dbName) ?? dbName] = value;
+    const property = meta.byDbName.get(dbName) ?? dbName;
+    // node-postgres returns timestamptz columns as Date objects. Contracts use
+    // ISO strings, and downstream sorts call localeCompare on these fields.
+    out[property] = value instanceof Date ? value.toISOString() : value;
   }
   return out;
 }

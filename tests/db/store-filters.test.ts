@@ -46,6 +46,19 @@ test('SQL store serializes JSONB arrays as JSON text', async () => {
   assert.ok([...calls[0].params].includes('["e1"]'));
 });
 
+test('SQL store normalizes Date columns to ISO strings at the repository boundary', async () => {
+  const observed = new Date('2026-11-23T00:00:00.000Z');
+  const executor = {
+    async query() {
+      return { rows: [{ id: 'obs-1', observed_at: observed }] };
+    },
+  };
+  const store = createSqlStore(executor as unknown as Parameters<typeof createSqlStore>[0]);
+  const [row] = await store.findAll('market_observations', {});
+  assert.equal(typeof row?.observedAt, 'string');
+  assert.equal(row?.observedAt, observed.toISOString());
+});
+
 test('SQL store ignores unknown filter names instead of emitting bad SQL', async () => {
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const executor = {
