@@ -11,9 +11,12 @@ Or save the block to a local file and run:
     python3 /opt/slabswarm/scripts/import-ebay-keys.py --input ~/ebay-keys-paste.txt
 
 The script detects labels such as "Client ID", "Client secret", "Cert ID" and
-"Refresh token". It writes the matching values to /opt/slabswarm/.env with mode
-0600. It reports only field names and line numbers; values are never printed.
-Unlabeled blobs are rejected rather than guessed.
+"Refresh token", whether the label is inline or on the line before the value.
+If the paste contains both Sandbox and Production sections, only the section
+matching --api-env is imported. It writes the matching values to
+/opt/slabswarm/.env with mode 0600. It reports only field names and line
+numbers; values are never printed. Unlabeled blobs and masked values are
+rejected rather than guessed.
 """
 
 from __future__ import annotations
@@ -44,29 +47,60 @@ LABEL_PATTERNS = [
 SECRET_RE = re.compile(r"^[A-Za-z0-9._~+/=-]{12,}$")
 
 
-def detect(text: str) -> tuple[dict[str, str], list[int]]:
+def key_for_label(text: str) -> str | None:
+    for key, pattern in LABEL_PATTERNS:
+        if pattern.search(text):
+            return key
+    return None
+
+
+def detect(text: str, api_env: str) -> tuple[dict[str, str], list[int], list[int]]:
+    """Find labelled values in the chosen section. Labels may be inline or on the preceding line."""
     found: dict[str, str] = {}
     unlabeled: list[int] = []
+    masked: list[int] = []
+    pending: str | None = None
+    section: str | None = None
     for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line:
             continue
-        # Common pasted forms: Label: value, Label = value, Label<TAB>value.
+        if re.fullmatch(r"sandbox|production", line, re.I):
+            section = line.lower()
+            pending = None
+            continue
+        if section is not None and section != api_env:
+            continue
+        # Inline form: "Client ID: value" or "App ID (Client ID) value".
         match = re.match(r"^([^:=]{2,60})\s*[:=\t]\s*(.+)$", line)
         if match:
-            label, value = match.group(1), match.group(2).strip()
-            for key, pattern in LABEL_PATTERNS:
-                if pattern.search(label):
-                    if key not in found:
-                        found[key] = value
-                    break
-            else:
+            key = key_for_label(match.group(1))
+            value = match.group(2).strip()
+            if key:
                 if SECRET_RE.match(value):
-                    unlabeled.append(number)
+                    found[key] = value
+                elif "•" in value or "*" in value:
+                    masked.append(number)
+                pending = None
+                continue
+        # Label on its own line; the value follows on a later line. Never treat
+        # a value that merely contains the word "cert" as another label.
+        key = key_for_label(line) if not SECRET_RE.match(line) else None
+        if key:
+            pending = key
             continue
+        if pending:
+            if SECRET_RE.match(line):
+                found[pending] = line
+                pending = None
+                continue
+            if "•" in line or "*" in line:
+                masked.append(number)
+                pending = None
+                continue
         if SECRET_RE.match(line):
             unlabeled.append(number)
-    return found, unlabeled
+    return found, unlabeled, masked
 
 
 def read_hidden_paste() -> str:
@@ -155,7 +189,7 @@ def main() -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    found, unlabeled = detect(text)
+    found, unlabeled, masked = detect(text, args.api_env)
     if "EBAY_CLIENT_ID" not in found or "EBAY_CLIENT_SECRET" not in found:
         missing = [name for name in ("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET") if name not in found]
         print("ERROR: could not identify: " + ", ".join(missing), file=sys.stderr)
@@ -178,6 +212,8 @@ def main() -> int:
     print(f"File mode: {oct(stat.S_IMODE(args.env_file.stat().st_mode))}")
     if unlabeled:
         print("Ignored unlabeled lines: " + ", ".join(str(n) for n in unlabeled))
+    if masked:
+        print("Ignored masked values: " + ", ".join(str(n) for n in masked))
     if not args.paste:
         print("Delete the paste file yourself when done: rm -- " + str(args.input))
     return 0
