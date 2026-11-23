@@ -6,13 +6,24 @@
 import type {
   MarketBasis,
   MarketObservationInput,
+  RepositoryBundle,
 } from '../contracts/dataProduct.ts';
 import { sanitizeError } from './runner.ts';
 import type {
+  CandidateRepository,
   ConfidenceBand,
   IngestCandidate,
-  IngestRepositories,
 } from './types.ts';
+
+/**
+ * Minimal repository surface promotion needs. Both the JSON ingest ledger and
+ * the canonical Postgres repository bundle satisfy it, so the same
+ * deterministic promotion logic can write either store without ad hoc SQL.
+ */
+export interface PromotionRepositories {
+  candidates: Pick<CandidateRepository, 'list'>;
+  marketObservations: RepositoryBundle['marketObservations'];
+}
 
 export interface PromotionResult {
   candidatesSeen: number;
@@ -124,7 +135,7 @@ function candidateIdOf(candidate: IngestCandidate): string {
  * underlying error message can never reach the result or the HTTP response.
  */
 export async function promoteCandidates(
-  repos: IngestRepositories,
+  repos: PromotionRepositories,
   options: PromoteOptions = {},
 ): Promise<PromotionResult> {
   void options.now;
@@ -144,16 +155,16 @@ export async function promoteCandidates(
   const keys = new Set<string>();
   const failedKeys = new Set<string>();
   for (const observation of existing) {
+    // Canonical rows persist the ref in `target_identity_id`; the JSON ledger
+    // keeps `targetIdentityRef`. Accept both so idempotency works on either.
+    const targetRef = (observation as unknown as Record<string, unknown>).targetIdentityRef
+      ?? (observation as unknown as Record<string, unknown>).targetIdentityId;
     if (
       typeof observation.evidenceId === 'string' &&
-      typeof observation.targetIdentityRef === 'string' &&
+      typeof targetRef === 'string' &&
       typeof observation.basis === 'string'
     ) {
-      keys.add(observationKey(
-        observation.evidenceId,
-        observation.targetIdentityRef,
-        observation.basis,
-      ));
+      keys.add(observationKey(observation.evidenceId, targetRef, observation.basis));
     }
   }
 

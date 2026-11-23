@@ -4,6 +4,12 @@ import type { RepositoryBundle } from '../../contracts/dataProduct.ts';
 import { createDefaultStore, type DbStore } from '../store.ts';
 import { createCardRepository, type CardRepository } from './card.ts';
 import { createEvidenceRepository, type EvidenceRepository } from './evidence.ts';
+import {
+  createAliasRepository,
+  createIdentityDecisionRepository,
+  type AliasRepository,
+  type IdentityDecisionRepository,
+} from './identity.ts';
 import { createForecastRepository, type ForecastRepository } from './forecast.ts';
 import { createJobsRepository, type JobsRepository } from './jobs.ts';
 import { createLearningRepository, type LearningRepository } from './learning.ts';
@@ -16,17 +22,32 @@ export interface Repositories extends RepositoryBundle {
   forecasts: ForecastRepository;
   learning: LearningRepository;
   jobs: JobsRepository;
+  /** Append-only deterministic identity decisions (one row per resolution). */
+  identityDecisions: IdentityDecisionRepository;
+  /** Absorbed source ids pointing at a surviving canonical card id. */
+  aliases: AliasRepository;
+  /**
+   * Run canonical reads and writes in one atomic unit. The callback receives
+   * repositories bound to the transaction; a throw rolls back every write.
+   */
+  transaction<T>(fn: (tx: Repositories) => Promise<T>): Promise<T>;
 }
 
 export function createRepositories(store: DbStore): Repositories {
-  return {
+  const repos: Repositories = {
     evidence: createEvidenceRepository(store),
     marketObservations: createMarketObservationRepository(store),
     cards: createCardRepository(store),
     forecasts: createForecastRepository(store),
     learning: createLearningRepository(store),
     jobs: createJobsRepository(store),
+    identityDecisions: createIdentityDecisionRepository(store),
+    aliases: createAliasRepository(store),
+    transaction<T>(fn: (tx: Repositories) => Promise<T>): Promise<T> {
+      return store.transaction((txStore) => fn(createRepositories(txStore)));
+    },
   };
+  return repos;
 }
 
 export function createDefaultRepositories(): Repositories {
@@ -37,6 +58,10 @@ export type {
   Card, CardInput, CardRepository,
 } from './card.ts';
 export type { EvidenceRepository } from './evidence.ts';
+export type {
+  AliasInput, AliasRepository, AliasRow,
+  IdentityDecisionInput, IdentityDecisionRepository, IdentityDecisionRow,
+} from './identity.ts';
 export type { Forecast, ForecastInput, ForecastRepository } from './forecast.ts';
 export type { Job, JobInput, JobStatus, JobsRepository } from './jobs.ts';
 export type { LearningEvent, LearningEventInput, LearningRepository } from './learning.ts';
