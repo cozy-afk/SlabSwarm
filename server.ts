@@ -28,6 +28,7 @@ import { createDurableRepositories } from './server/ingest/store.ts';
 import { setActiveReportRepositories } from './server/intelligence/active-report.ts';
 import { mountIntelligenceRoutes } from './server/intelligence/routes.ts';
 import { mountServingRoutes } from './server/serving/routes.ts';
+import { createDataProductContractRouter } from './server/serving/contractRoutes.ts';
 import { envelope, newContext, UNKNOWN } from './server/serving/catalog.ts';
 import { mountWebHarvestRouter } from './server/webharvest/routes.ts';
 import { createWebHarvestStore } from './server/webharvest/store.ts';
@@ -255,6 +256,11 @@ export async function createApp(options: CreateAppOptions = {}) {
       throw error;
     }
   };
+
+  // UI contract routes must precede the legacy intelligence router: the UI
+  // reads these three paths with useEnvelope() and needs data+meta, not the
+  // old bare responses. No new listener; same operator gate.
+  app.use(createDataProductContractRouter(dataRepositories, operatorAuth.requireAuth));
 
   mountDbRoutes(app, { requireAuth: operatorAuth.requireAuth });
   app.use(createIngestRouter(dataRepositories));
