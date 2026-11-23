@@ -55,8 +55,14 @@ export function createDefaultRepositories(): Repositories {
 }
 
 export type {
-  Card, CardInput, CardRepository,
+  Card,
+  CardInput,
+  CardRepository,
+  CatalogFacetKey,
+  CatalogFacetView,
+  CatalogSearchOptions,
 } from './card.ts';
+export { CATALOG_FACET_KEYS, extractCatalogFacets, searchCatalogCards } from './card.ts';
 export type { EvidenceRepository } from './evidence.ts';
 export type {
   AliasInput, AliasRepository, AliasRow,
