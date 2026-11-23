@@ -7,6 +7,14 @@ Date: 2026-11-23
 
 Slabswarm's own database must be trustworthy enough to predict card prices and market behaviour before any thought of selling access. Today the app has three competing stores: the legacy JSON graph, a JSON ingest ledger, and canonical Postgres tables. The same card can return different facts depending on the endpoint. That has to end before more data is added.
 
+## Product thesis
+
+The value is the join, not any single source. We combine catalogs and products from multiple places, resolve them to one first-party identity, then attach historical prices, completed sales and active listings as separately labelled evidence. Deterministic code turns that matched evidence into price guidance, forecasts and scores.
+
+The chain is: catalog/checklist facts → identity resolution → immutable price evidence with basis and provenance → normalized observations → valuation and forecast → scoring against real outcomes → learning. A catalog without prices is a list. A price without a source is a guess. A forecast without a score is an opinion. We ship the whole chain or none of it.
+
+This does not license us to invent market truth. SOLD data must come from an observed sale; GUIDE and ASKING stay distinct; simulations remain hypotheses. Where a source is gated — eBay sold data, for example — the honest answer is that the dataset has a gap, not that a model filled it.
+
 ## Goals
 
 1. One source of truth: canonical Postgres is authoritative for catalog, evidence, observations, forecasts, scores and learning state.
