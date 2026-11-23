@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import type { ActiveReport, ApiEnvelope, ApiMeta } from '../types/dataProduct.ts';
+import type { ActiveReport, ApiEnvelope, ApiMeta, Provenance } from '../types/dataProduct.ts';
 import { apiFetch } from './apiClient.ts';
 
 /**
@@ -33,6 +33,10 @@ export const ROUTES = {
   learningRunCycle: '/api/learning/run-cycle',
   sqlQuery: '/api/sql/query',
   sqlSaved: '/api/sql/saved',
+  webSources: '/api/web-harvest/sources',
+  webHarvestQueue: '/api/web-harvest/review-queue',
+  webHarvestCandidates: '/api/web-harvest/candidates',
+  webHarvestReview: '/api/web-harvest/review',
 } as const;
 
 /** Substitute route tokens without ever emitting an unencoded value. */
@@ -93,6 +97,113 @@ export async function postEnvelope<T>(
 /** Typed read of the real, evidence-backed active trading report. */
 export function fetchActiveReport(): Promise<ApiEnvelope<ActiveReport>> {
   return fetchEnvelope<ActiveReport>(ROUTES.activeReport);
+}
+
+// --- Web source review queue -------------------------------------------------
+// Local mirrors of the frozen server/contracts/webHarvest.ts shapes. Browser
+// code never imports server modules; UNKNOWN stays a literal, never zero.
+
+export type ReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type ReviewAction = 'APPROVE' | 'REJECT';
+export type WebHarvestBasis =
+  | 'SOLD' | 'ASKING' | 'OFFER' | 'GUIDE' | 'CLAIM' | 'POPULATION' | 'UNKNOWN';
+export type WebHarvestConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
+
+export interface WebSourceConfigView {
+  id: string;
+  name: string;
+  url: string;
+  kind: 'json' | 'html';
+  enabled: boolean;
+  license: string;
+  respectRobots: boolean;
+  rateLimitMs: number;
+  recordPath?: string;
+  selectors?: Record<string, string>;
+  provenanceNote?: string;
+}
+
+export interface WebHarvestCandidateView {
+  id: string;
+  sourceId: string;
+  evidenceId: string;
+  name: string;
+  set: string | 'UNKNOWN';
+  game: string | 'UNKNOWN';
+  number: string | 'UNKNOWN';
+  basis: WebHarvestBasis;
+  amount: number | 'UNKNOWN';
+  currency: string | 'UNKNOWN';
+  observedAt: string;
+  capturedAt: string;
+  license: string;
+  confidence: WebHarvestConfidence;
+  warnings: string[];
+}
+
+export interface ReviewCandidateView extends WebHarvestCandidateView {
+  status: ReviewStatus;
+  reviewedAt?: string;
+  reviewNote?: string;
+}
+
+export interface WebSourcesResponse {
+  sources: WebSourceConfigView[];
+}
+
+export interface WebHarvestQueueResponse {
+  candidates: ReviewCandidateView[];
+  counts: Record<ReviewStatus, number>;
+}
+
+export interface WebHarvestCardView {
+  id: string;
+  name: string;
+  identityKey: string;
+  facets?: Record<string, unknown> | null;
+}
+
+export interface WebHarvestObservationView {
+  id: string;
+  evidenceId: string;
+  targetIdentityId: string;
+  basis: WebHarvestBasis;
+  amount: number;
+  currency: string;
+  observedAt: string;
+}
+
+export interface WebHarvestReviewResponse {
+  candidate: ReviewCandidateView;
+  card: WebHarvestCardView | null;
+  observation: WebHarvestObservationView | null;
+  provenance?: Provenance;
+}
+
+export interface WebHarvestEnqueueResponse {
+  candidates: ReviewCandidateView[];
+  enqueued: number;
+  duplicates: number;
+}
+
+export function fetchWebSources(): Promise<ApiEnvelope<WebSourcesResponse>> {
+  return fetchEnvelope<WebSourcesResponse>(ROUTES.webSources);
+}
+
+export function fetchWebHarvestQueue(status?: ReviewStatus): Promise<ApiEnvelope<WebHarvestQueueResponse>> {
+  return fetchEnvelope<WebHarvestQueueResponse>(withQuery(ROUTES.webHarvestQueue, { status }));
+}
+
+export function enqueueWebCandidates(candidates: WebHarvestCandidateView[]): Promise<ApiEnvelope<WebHarvestEnqueueResponse>> {
+  return postEnvelope<WebHarvestEnqueueResponse>(ROUTES.webHarvestCandidates, { candidates });
+}
+
+export function reviewWebCandidate(
+  candidateId: string,
+  action: ReviewAction,
+  note?: string
+): Promise<ApiEnvelope<WebHarvestReviewResponse>> {
+  return postEnvelope<WebHarvestReviewResponse>(ROUTES.webHarvestReview, { candidateId, action, note });
 }
 
 export interface EnvelopeState<T> {
