@@ -257,17 +257,21 @@ git commit -m "feat: export canonical data to Parquet and cite lake in report"
 
 Quote the licence clause requiring express prior written permission to derive average selling price or gross merchandise sold for any eBay category [67]. State plainly that our intended use falls inside it.
 
-- [ ] **Step 2: Record the access path**
+- [ ] **Step 2: Use the Sandbox for plumbing, not data**
+
+With the owner's Sandbox keyset, build and test an injected-fetch adapter against Sandbox endpoints: auth, request shape, error handling and rate-limit behaviour. Sandbox transactions are mocks; they cannot supply real sold prices. Keys are stored server-side through the vault or the private `.env`, never in chat, code or docs.
+
+- [ ] **Step 3: Record the access path**
 
 Summarize from the primary guide: free developer account, keysets for Sandbox and Production, Buy APIs intended for approved partners, application growth check required for restricted APIs in production [68].
 
-- [ ] **Step 3: Define the owner action**
+- [ ] **Step 4: Define the owner action**
 
-List what the owner must supply before any code is written: registered developer account with business email, accepted licence, keyset, written permission for price derivation, and Buy API approval. Keys go into the server-side secret store through the vault; never into chat, docs or the repo.
+List what the owner must supply before any production code is enabled: Production keyset, written permission for price derivation, Buy API approval, and estimated hourly/daily call volume for the growth check.
 
-- [ ] **Step 4: Commit the review document**
+- [ ] **Step 5: Commit the review document**
 
-Expected outcome: either "approved, adapter may be planned" or "not approved, no eBay feed". No adapter is implemented in this task either way.
+Expected outcome: either "approved, adapter may be enabled" or "not approved, no eBay feed". The Sandbox adapter may exist in code but stays disabled against production until approval is documented.
 
 ### Task 7: Integration and verification
 
