@@ -121,7 +121,7 @@ export function createSqlStore(executor: DbExecutor): DbStore {
     const clauses: string[] = [];
     const values: unknown[] = [];
     for (const [property, value] of Object.entries(filters)) {
-      if (!(property in metaFor(table).byProperty)) continue;
+      if (!metaFor(table).byProperty.has(property)) continue;
       const column = sqlLiteral(table, property);
       if (value === undefined || value === null) {
         clauses.push(`${column} IS NULL`);
