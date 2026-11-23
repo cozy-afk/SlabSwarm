@@ -9,6 +9,8 @@ const storeMod = () => import('../../server/ingest/store.ts');
 const routesMod = () => import('../../server/ingest/routes.ts');
 
 const CAPTURED_AT = '2026-11-23T12:00:00.000Z';
+const SERVER_CAPTURED_AT = '2026-11-23T15:30:00.000Z';
+const FORGED_CAPTURED_AT = '2001-01-01T00:00:00.000Z';
 const OBSERVED_AT = '2026-11-21T09:00:00.000Z';
 const SECRET = 'SUPER-SECRET-DO-NOT-LEAK';
 
@@ -67,6 +69,7 @@ before(async () => {
           };
         },
         now: () => 5_000_000,
+        captureNow: () => new Date(SERVER_CAPTURED_AT),
       },
     }),
   );
@@ -173,6 +176,56 @@ test('POST /api/ingest/web-harvest harvests into ledger evidence with no canonic
     sources: Array<Record<string, unknown>>;
   };
   assert.equal(JSON.stringify(listed).includes(SECRET), false);
+});
+
+test('POST /api/ingest/web-harvest ignores a forged capturedAt and stamps server time', async () => {
+  // A distinct source + payload avoids the idempotency key of earlier tests.
+  // It is removed in `finally` so the shared registry is left untouched.
+  await post('/api/ingest/web-sources', { source: config({ id: 'web-provenance-source' }) });
+  try {
+    const provenanceBody = JSON.stringify({
+      data: {
+        cards: [{
+          name: 'Provenance Card', set: 'Base', game: 'Pokemon', number: '2',
+          basis: 'OFFER', amount: 44, currency: 'USD', observedAt: OBSERVED_AT,
+        }],
+      },
+    });
+    setFetchResponse(() => ({ status: 200, body: provenanceBody }));
+    // Only harvest the isolated source; the earlier source stays enabled.
+    const res = await post('/api/ingest/web-harvest', {
+      sourceIds: ['web-provenance-source'],
+      capturedAt: FORGED_CAPTURED_AT,
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as {
+      results: Array<{ candidates: Array<{ capturedAt: string; evidenceId: string }> }>;
+      evidence: Array<{ id: string; sourceId: string; capturedAt: string }>;
+    };
+    assert.equal(body.results.length, 1);
+    const candidate = body.results[0].candidates[0];
+    assert.ok(candidate, 'a candidate was produced');
+    assert.equal(
+      candidate.capturedAt, SERVER_CAPTURED_AT,
+      'candidate carries the injected server clock, not the forged body value',
+    );
+    const stored = body.evidence.find((row) => row.id === candidate.evidenceId);
+    assert.ok(stored, 'evidence record is present in the store-backed response');
+    assert.equal(
+      stored.capturedAt, SERVER_CAPTURED_AT,
+      'immutable evidence is stamped by the server clock, not by the caller',
+    );
+    // Read the ledger again to prove the persisted record, not just the response.
+    const ledger = await (await fetch(`${baseUrl}/api/evidence`)).json() as {
+      evidence: Array<{ id: string; capturedAt: string }>;
+    };
+    const persisted = ledger.evidence.find((row) => row.id === candidate.evidenceId);
+    assert.ok(persisted, 'evidence persisted in the ledger');
+    assert.equal(persisted.capturedAt, SERVER_CAPTURED_AT, 'persisted capturedAt is never caller-controlled');
+    assert.notEqual(persisted.capturedAt, FORGED_CAPTURED_AT);
+  } finally {
+    await post('/api/ingest/web-sources', { action: 'remove', id: 'web-provenance-source' });
+  }
 });
 
 test('invalid source config returns 400 without mutating the allowlist', async () => {
