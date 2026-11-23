@@ -16,6 +16,16 @@ export interface MarketObservationRepository {
   upsert(input: MarketObservationInput): Promise<MarketObservation>;
 }
 
+const CONFIDENCE_SCORE: Record<string, number> = {
+  HIGH: 0.9, MEDIUM: 0.6, LOW: 0.3, UNKNOWN: 0,
+};
+
+function confidenceScore(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') return CONFIDENCE_SCORE[value] ?? null;
+  return null;
+}
+
 function toRow(input: MarketObservationInput, id: string, existing?: Row): Row {
   return {
     id,
@@ -30,7 +40,7 @@ function toRow(input: MarketObservationInput, id: string, existing?: Row): Row {
     capturedAt: reusedIso(existing?.capturedAt),
     priceComponents: input.priceComponents ?? null,
     status: input.status ?? existing?.status ?? 'RAW',
-    confidence: (input as unknown as Row).confidence ?? null,
+    confidence: confidenceScore((input as unknown as Row).confidence ?? existing?.confidence),
     lineage: existing?.lineage ?? { evidenceId: input.evidenceId, targetIdentityRef: input.targetIdentityRef },
     createdAt: reusedIso(existing?.createdAt),
   };

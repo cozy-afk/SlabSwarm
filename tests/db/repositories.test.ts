@@ -40,6 +40,16 @@ function observation(overrides: Partial<MarketObservationInput> = {}): MarketObs
   };
 }
 
+test('market observation repository stores confidence as a numeric score', async () => {
+  const store = createMemoryStore();
+  const repos = createRepositories(store);
+  await repos.marketObservations.create({
+    ...observation(), confidence: 'UNKNOWN',
+  } as MarketObservationInput);
+  const [row] = await store.findAll('market_observations', {});
+  assert.equal(row?.confidence, 0);
+});
+
 test('evidence repository creates, gets and lists records using shared contract types', async () => {
   const repos = createRepositories(createMemoryStore());
   const created = await repos.evidence.create(evidence());
