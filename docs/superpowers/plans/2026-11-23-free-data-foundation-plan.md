@@ -18,6 +18,8 @@ Free catalog sources are real but differ in shape. Scryfall is public with bulk 
 
 eBay is the largest marketplace but is a legal gate, not a feed we can simply add. Its API License Agreement requires eBay's express prior written permission to derive average selling price or gross merchandise sold for any eBay category [67]. The Buy APIs, including Marketplace Insights for sold history, are intended for approved partners and require an application review before production use [68]. Our product's core purpose — deriving prices from sold data — sits squarely inside that restriction. Task 8 handles the approval path; no eBay adapter may be wired before written permission exists.
 
+The two eBay repos are useful to the assistant, not a substitute for the product feed. The MCP server is read-only against production REST GET and GraphQL queries and explicitly does not support Sandbox [69]. The migration skills are guidance only; they do not call APIs or handle live data [70]. Both are already installed locally — the MCP is configured in `~/.hermes/config.yaml` in application-token mode and nine `ebay-*` skills exist. They can help with research and OAuth questions; they cannot supply first-party market evidence or bypass the licence gate.
+
 ## Global Constraints
 
 - Raw evidence immutable. Corrections append.
@@ -290,3 +292,5 @@ Sources:
 [66] https://poketrace.com/developers — PokeTrace developer overview
 [67] https://developer.ebay.com/develop/apis/api-license-agreement — eBay API License Agreement
 [68] https://developer.ebay.com/develop/get-started/get-started-on-a-buying-application — eBay Get Started on a Buying Application
+[69] https://github.com/eBay/npm-public-api-mcp — eBay public API MCP server
+[70] https://github.com/eBay/public-api-migration-skills — eBay public API migration skills
