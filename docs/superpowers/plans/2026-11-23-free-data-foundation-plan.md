@@ -424,6 +424,16 @@ Rebuild the Docker image, recreate only the app container, run migrations if nee
 - [ ] No billing provider, gateway or public listener in this task.
 - [ ] Record the decision and prerequisite checklist, then commit.
 
+### Task 19: mount the approved-harvest export hook (from Task 5 review)
+
+**Files:** `server.ts`, the web-harvest router test, and the progress ledger.
+
+- [ ] Confirm the web-harvest review router can be mounted only behind the existing operator gate. Do not create a new public listener or change the shared form gate.
+- [ ] Mount it with Task 5's `onApproved` callback so an approved web harvest rebuilds the Parquet lake.
+- [ ] Test that APPROVE triggers exactly one export in the mounted app and REJECT triggers none; keep the existing canonical commit semantics.
+- [ ] Record operator-visible behavior when the export hook fails after approval; a silent stale manifest is not acceptable in production.
+- [ ] Commit with exact test counts in the ledger.
+
 ### Task 7: Integration and verification
 
 - [ ] Merge all lanes; run all test files explicitly and `npx tsc --noEmit`.
