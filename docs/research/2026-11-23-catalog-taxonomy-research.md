@@ -38,6 +38,16 @@ JSON:API requires a top-level `data` or `errors` member and forbids both togethe
 
 Design consequence: our `{data,meta}` envelope is close. Add problem+json errors, 429 with Retry-After, and treat future customer keys as project identifiers, not authorization by themselves.
 
+## 7. Consumer catalogs as product shape, not feeds
+
+The pasted list mixes three different things: collection trackers, physical storage, and price guides. Physical storage is irrelevant to the API. The useful signal is that mature products separate catalog/checklist data from price observations. Trading Card API's own provenance docs say every checklist, metadata field or image originated somewhere, and model that as Set Sources with `source_type` of `checklist`, `metadata` or `images` [71]. That maps directly onto our evidence and provenance design.
+
+Trading Card Database and LastDodo are consumer catalogues. Trading Card API uses tradingcarddb.com as an example checklist source URL, not as an open feed [71]; LastDodo's public page is a browsable catalogue with no developer API found [73]. Beckett guides are print reference data with no API found; they would enter through manual/CSV ingestion if we can license them.
+
+PriceCharting and SportsCardsPro are paid: APIs require a subscription token, CSV export is limited to top tiers, and historic prices and sales are not supported by the official API [72]. Third-party wrappers exist — ReefAPI exposes SportsCardsPro grades, population, monthly history and completed sales behind its own key and credit meter [74] — but terms and redistribution rights need checking before use.
+
+Direction: keep our split between immutable catalog facts and sourced market observations. Add a `sources` concept to sets/checklists. Treat consumer catalogs as manual/CSV research inputs. Do not treat any of them as a free market feed.
+
 ## Access and licensing reality
 
 Several useful sources are closed, gated or legally restricted: TCGplayer no longer grants new access [11], Cardmarket docs were unreachable [16], and eBay sold data is limited release [25]. PriceCharting redistribution needs a commercial licence [24]. Populate our own database from sources we can legally use, and record licence on every evidence row.
@@ -82,3 +92,7 @@ Sources:
 [60] https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-ratelimit-headers — RateLimit headers draft
 [61] https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429 — HTTP 429 MDN
 [62] https://cloud.google.com/docs/authentication/api-keys — Google API keys
+[71] https://tradingcardapi.com/docs/concepts/data-provenance — Trading Card API - Data Provenance and Set Sources
+[72] https://www.sportscardspro.com/api-documentation — SportsCardsPro Prices API documentation
+[73] https://www.lastdodo.com/en/catalog/20191-trading-cards — LastDodo trading cards catalogue
+[74] https://reefapi.com/docs/sportscardspro.md — ReefAPI SportsCardsPro reference
