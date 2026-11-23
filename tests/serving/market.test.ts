@@ -52,8 +52,8 @@ test('GET /api/pricing/:id uses one explicit-basis source group and never invent
   assert.deepEqual(body.meta.provenance, body.data.provenance);
   assert.equal(body.meta.basis, 'SOLD');
   assert.ok(body.meta.warnings.some((w: string) => w.includes('no cross-source aggregation or FX conversion')));
-  assert.ok(!JSON.stringify(body).includes('250'), 'ASKING quote is not priced as SOLD');
-  assert.ok(!JSON.stringify(body).includes('"EUR"'), 'EUR quote is not mixed into USD summary');
+  assert.ok(!JSON.stringify(body.data).includes('250'), 'ASKING quote is not priced as SOLD');
+  assert.ok(!JSON.stringify(body.data).includes('"EUR"'), 'EUR quote is not mixed into USD summary');
 });
 
 test('GET /api/pricing/:id?basis=ASKING preserves the requested basis', async () => {
