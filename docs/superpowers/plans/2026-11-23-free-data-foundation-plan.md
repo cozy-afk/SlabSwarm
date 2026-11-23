@@ -372,6 +372,58 @@ Check that `GET /api/intelligence/active-report` cites at least one canonical ev
 
 Rebuild the Docker image, recreate only the app container, run migrations if needed, and verify the endpoints over `10.99.0.1:3010`. Do not change firewall, DNS or the shared gate.
 
+### Task 13: catalog facets and filterable search (from commercial-scope fold-in)
+
+**Files:** extend catalog repository/search and its test.
+
+- [ ] Add searchable facets for set, parallel, serial run, grade, rookie flag and category without changing canonical identity rules.
+- [ ] Test filtering and typo-tolerant lookup with injected data; no external search service.
+- [ ] Commit with exact test counts in the ledger.
+
+### Task 14: deterministic FMV and confidence bands (from commercial-scope fold-in)
+
+**Files:** extend valuation and pricing tests.
+
+- [ ] Implement recency-weighted decay with IQR outlier removal over SOLD evidence only.
+- [ ] Add explicit confidence bands. Cross-grade imputation must be labelled as an estimate with its own basis and never overwrite or relabel a real sale.
+- [ ] Test ASKING, GUIDE and SOLD stay separate and missing data remains UNKNOWN.
+- [ ] Commit with exact test counts in the ledger.
+
+### Task 15: liquidity, population and demand factor pack (from commercial-scope fold-in)
+
+**Files:** extend factor scoring and tests.
+
+- [ ] Compute price momentum, absorption ratio and population velocity from canonical data where available.
+- [ ] Mark attention and catalyst factors UNKNOWN until a licensed source is approved.
+- [ ] No model writes canonical facts; no proxy scraping or paid feed in this task.
+- [ ] Commit with exact test counts in the ledger.
+
+### Task 16: low-confidence match quarantine and QA queue (from commercial-scope fold-in)
+
+**Files:** extend identity resolution and the internal admin UI.
+
+- [ ] Hard-attribute extraction for grade company, numeric grade, cert number, serial run and card number from listing titles.
+- [ ] Quarantine matches below the confidence floor; never let them into FMV.
+- [ ] Add an internal review queue that records human decisions as corrections with provenance. No new public listener.
+- [ ] Commit with exact test counts in the ledger.
+
+### Task 17: watchlist, alerts and portfolio surface (from commercial-scope fold-in)
+
+**Files:** new UI views and API routes behind the existing gate.
+
+- [ ] Gate on reliable canonical prices and Task 14.
+- [ ] Track holdings, realized/unrealized value with explicit basis, and alert rules.
+- [ ] Fee and tax calculators stay estimates with visible assumptions.
+- [ ] Commit with exact test counts in the ledger.
+
+### Task 18: metered B2B API design (from commercial-scope fold-in)
+
+**Files:** design document only until data quality is proven.
+
+- [ ] Define API key lifecycle, quotas, usage records and response contracts.
+- [ ] No billing provider, gateway or public listener in this task.
+- [ ] Record the decision and prerequisite checklist, then commit.
+
 ### Task 7: Integration and verification
 
 - [ ] Merge all lanes; run all test files explicitly and `npx tsc --noEmit`.
