@@ -10,7 +10,7 @@
 import express, { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import { runDiscoverySweep, type DiscoveryOptions } from './discovery.ts';
-import { exportAnalyticsParquet } from './parquet.ts';
+import { exportCanonicalLake, type CanonicalLakeSource } from './parquet.ts';
 import {
   getBuiltInQueries,
   listSavedQueries,
@@ -32,6 +32,8 @@ import {
 export interface AnalyticsRouteOptions {
   store?: AnalyticsStore;
   lakeDir?: string;
+  /** Canonical read repositories; the lake always rebuilds from these when supplied. */
+  canonical?: CanonicalLakeSource;
   /** Server-owned sweep defaults; request bodies may narrow numeric windows. */
   sweepOptions?: Omit<DiscoveryOptions, 'now'>;
 }
@@ -130,7 +132,16 @@ export function mountAnalyticsRoutes(target: Router, options: AnalyticsRouteOpti
 
   // Admin-only at the integrator's discretion: export writes the derived lake.
   target.post('/api/admin/export-parquet', wrap(async (_req, res) => {
-    const manifest = await exportAnalyticsParquet(store, { lakeDir: options.lakeDir });
+    const snapshot = store.snapshot();
+    const canonical: CanonicalLakeSource = options.canonical ?? {
+      evidence: { list: async () => snapshot.evidence },
+      marketObservations: { list: async () => snapshot.observations },
+    };
+    const manifest = await exportCanonicalLake(canonical, {
+      lakeDir: options.lakeDir,
+      store,
+      seed: snapshot,
+    });
     respond(res, 200, manifest, { ok: true, ...manifest });
   }));
 

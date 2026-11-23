@@ -109,15 +109,16 @@ test('comps correctness: anomalies are basis- and currency-matched only', () => 
   console.log(`[bench] comps_correctness anomalies=${anomalies.length} findings=${result.findings.length} sweep_ms=${metrics.sweepMs}`);
 });
 
-test('export completeness: six datasets, exact counts, provenance columns', async () => {
+test('export completeness: seven datasets, exact counts, provenance columns', async () => {
   const started = performance.now();
   const manifest = await exportAnalyticsParquet(store, { lakeDir, now: FIXED_NOW });
   metrics.exportMs = Math.round((performance.now() - started) * 100) / 100;
 
-  const expected = ['evidence', 'observations', 'identities', 'events', 'forecasts', 'scores'];
+  const expected = ['evidence', 'observations', 'identities', 'events', 'forecasts', 'scores', 'findings'];
   assert.deepEqual(manifest.datasets.map((d) => d.name), expected);
   assert.equal(manifest.datasets.find((d) => d.name === 'observations')?.rows, OBSERVATION_COUNT);
-  assert.equal(manifest.datasets.length, 6);
+  assert.equal(manifest.datasets.length, 7);
+  assert.ok(manifest.datasets.every((d) => /^([a-f0-9]{64}|UNKNOWN)$/.test(d.checksum)));
 
   const instance = await DuckDBInstance.create(':memory:');
   const connection = await instance.connect();

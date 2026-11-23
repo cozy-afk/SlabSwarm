@@ -111,17 +111,18 @@ test('saved-query endpoints support CRUD and reject write SQL', async () => {
   assert.equal(removed.status, 200);
 });
 
-test('POST /api/admin/export-parquet returns a six-dataset manifest', async () => {
+test('POST /api/admin/export-parquet returns a seven-dataset manifest', async () => {
   const response = await jsonRequest('/api/admin/export-parquet', {
     method: 'POST', body: '{}',
   });
   assert.equal(response.status, 200);
   assert.equal(response.body.ok, true);
-  const datasets = response.body.datasets as Array<{ name: string; rows: number }>;
+  const datasets = response.body.datasets as Array<{ name: string; rows: number; checksum: string }>;
   assert.deepEqual(datasets.map((d) => d.name), [
-    'evidence', 'observations', 'identities', 'events', 'forecasts', 'scores',
+    'evidence', 'observations', 'identities', 'events', 'forecasts', 'scores', 'findings',
   ]);
   assert.equal((datasets.find((d) => d.name === 'observations')?.rows), 3);
+  assert.ok(datasets.every((d) => /^([a-f0-9]{64}|UNKNOWN)$/.test(d.checksum)));
 });
 
 test('malformed requests return 400 rather than a server error', async () => {

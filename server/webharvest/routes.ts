@@ -20,6 +20,7 @@ import {
   ReviewError,
   createWebHarvestStore,
   type ReviewAction,
+  type ReviewResult,
   type WebHarvestStore,
 } from './store.ts';
 
@@ -28,6 +29,12 @@ export interface WebHarvestRouteOptions {
   store?: WebHarvestStore;
   /** Deterministic clock for per-request meta timestamps. */
   now?: () => Date;
+  /**
+   * Integrator-owned hook invoked after an APPROVE commits canonical rows.
+   * The lake is a rebuildable artifact: a failed export never rolls back the
+   * approval, and no export runs for a rejection.
+   */
+  onApproved?: (result: ReviewResult) => Promise<unknown> | unknown;
 }
 
 const WARNINGS = [
@@ -204,6 +211,14 @@ export function createWebHarvestRouter(options: WebHarvestRouteOptions = {}): Ro
     if (!result) {
       respondError(res, 404, context, 'Candidate not found.', 'not_found');
       return;
+    }
+    if (action === 'APPROVE' && options.onApproved) {
+      try {
+        await options.onApproved(result);
+      } catch {
+        // Approval is already committed. The lake is rebuildable; a failed
+        // export is reported as UNKNOWN by the next report, never fabricated.
+      }
     }
     res.status(200).json(envelope(result, context, {
       source: result.provenance.source,
