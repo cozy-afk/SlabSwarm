@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Import eBay keys from a LOCAL text file without printing their values.
 
-Copy the whole block from the eBay keys page — including the labels — into a
-file on this host, then run:
+Copy the whole block from the eBay keys page — including the labels — and run:
+
+    python3 /opt/slabswarm/scripts/import-ebay-keys.py --paste
+    # paste the block, then press Ctrl-D
+
+Or save the block to a local file and run:
 
     python3 /opt/slabswarm/scripts/import-ebay-keys.py --input ~/ebay-keys-paste.txt
 
@@ -20,6 +24,7 @@ import re
 import stat
 import sys
 import tempfile
+import termios
 from pathlib import Path
 
 MANAGED = {
@@ -62,6 +67,23 @@ def detect(text: str) -> tuple[dict[str, str], list[int]]:
         if SECRET_RE.match(line):
             unlabeled.append(number)
     return found, unlabeled
+
+
+def read_hidden_paste() -> str:
+    """Read a pasted block from the terminal with echo disabled until EOF."""
+    if not sys.stdin.isatty():
+        raise RuntimeError("hidden paste requires a TTY; use ssh -t")
+    fd = sys.stdin.fileno()
+    attrs = termios.tcgetattr(fd)
+    hidden = list(attrs)
+    hidden[3] &= ~termios.ECHO
+    print("Paste the eBay keys block with its labels. Input is hidden.")
+    print("Press Ctrl-D on a new line when finished.\n")
+    try:
+        termios.tcsetattr(fd, termios.TCSADRAIN, hidden)
+        return sys.stdin.read()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
 
 
 def read_lines(path: Path) -> list[str]:
@@ -110,18 +132,27 @@ def write_private(path: Path, lines: list[str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, required=True, help="local file containing the pasted eBay keys")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--input", type=Path, help="local file containing the pasted eBay keys")
+    source.add_argument("--paste", action="store_true", help="read the pasted block from the terminal with echo hidden")
     parser.add_argument("--env-file", type=Path, default=Path("/opt/slabswarm/.env"))
     parser.add_argument("--api-env", choices=("sandbox", "production"), default="sandbox")
     args = parser.parse_args()
 
-    if not args.input.is_file():
-        print(f"ERROR: input file not found: {args.input}", file=sys.stderr)
-        return 2
     try:
-        text = args.input.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        print("ERROR: input file is not plain text.", file=sys.stderr)
+        if args.paste:
+            text = read_hidden_paste()
+        else:
+            if not args.input.is_file():
+                print(f"ERROR: input file not found: {args.input}", file=sys.stderr)
+                return 2
+            try:
+                text = args.input.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                print("ERROR: input file is not plain text.", file=sys.stderr)
+                return 2
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     found, unlabeled = detect(text)
@@ -147,7 +178,8 @@ def main() -> int:
     print(f"File mode: {oct(stat.S_IMODE(args.env_file.stat().st_mode))}")
     if unlabeled:
         print("Ignored unlabeled lines: " + ", ".join(str(n) for n in unlabeled))
-    print("Delete the paste file yourself when done: rm -- " + str(args.input))
+    if not args.paste:
+        print("Delete the paste file yourself when done: rm -- " + str(args.input))
     return 0
 
 
