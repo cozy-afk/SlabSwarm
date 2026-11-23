@@ -2,6 +2,7 @@
 
 Status: proposed for approval
 Date: 2026-11-23
+Binding goal: `docs/PRODUCT_GOAL.md`. This design serves that goal; conflicts resolve against the goal document.
 
 ## Intent
 
