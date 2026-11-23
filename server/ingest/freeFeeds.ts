@@ -24,7 +24,7 @@ export const FREE_FEEDS: FreeFeedConfig[] = [
   {
     sourceId: 'carddex',
     vertical: 'TRADING_CARD_GAME',
-    baseUrl: 'https://api.carddex.io',
+    baseUrl: 'https://api.carddex.dev',
     rateLimitMs: 250,
     license: 'CARDEX_API_TERMS_ATTRIBUTION_REQUIRED',
     attributionRequired: true,

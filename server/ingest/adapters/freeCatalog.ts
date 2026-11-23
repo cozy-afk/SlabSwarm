@@ -39,9 +39,11 @@ export interface FreeFeedAdapterOptions {
 }
 
 const DEFAULT_PATHS: Record<string, string[]> = {
-  scryfall: ['/cards'],
-  pokemontcg: ['/v2/cards'],
-  carddex: ['/cards'],
+  // Scryfall requires an accurate User-Agent (sent below). Its terms forbid
+  // paywalling Scryfall data, so this feed stays out of the commercial product.
+  scryfall: ['/cards/random'],
+  pokemontcg: ['/v2/cards?q=name:Pikachu&pageSize=20'],
+  carddex: ['/v1/cards?name=Pikachu&pageSize=20'],
   cardex: ['/cards'],
 };
 
@@ -324,7 +326,10 @@ export function createFreeFeedAdapter(config: FreeFeedConfig): IngestAdapter {
           waits.push(config.rateLimitMs);
         }
         const url = resolveUrl(config.baseUrl, paths[index]!);
-        const headers: Record<string, string> = { accept: 'application/json' };
+        const headers: Record<string, string> = {
+          accept: 'application/json',
+          'user-agent': 'Slabswarm/1.0 (first-party trading-card data product)',
+        };
         // Only the env var named by the config is ever read; it is sent as a
         // header and never placed in a URL, log, meta or error message.
         if (key !== null && config.apiKeyEnv) headers['x-api-key'] = key;
