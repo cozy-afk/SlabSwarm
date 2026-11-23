@@ -17,6 +17,8 @@ export const REGISTERED_TOOLS = [
   'get_event_history',
   'get_factor_scores',
   'search_sources',
+  'search_web_sources',
+  'harvest_web_source',
   'run_deterministic_baseline',
   'run_simulation',
   'backtest_forecast',
@@ -240,4 +242,8 @@ export function invokeTool(call: ToolCall, ctx: ToolContext): ToolResult {
         horizonDays: [7, 30, 90].includes(args.horizonDays as number) ? args.horizonDays : 30,
       });
   }
+
+  // The two web tools use injected async fetch and are dispatched by
+  // server/swarm/webTools.ts; this registry function only enforces citations.
+  return ok({ deferred: true, reason: 'USE_WEB_TOOL_FACADE' });
 }
