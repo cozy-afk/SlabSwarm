@@ -159,6 +159,9 @@ export interface RunIngestOptions {
   capturedAt?: string;
   options?: Record<string, unknown>;
   registry?: AdapterLookup;
+  /** Server-side secret values to redact from every error before it is
+   * returned or persisted in the run record. Never sourced from request data. */
+  secrets?: string[];
 }
 
 export interface RunIngestResult {
