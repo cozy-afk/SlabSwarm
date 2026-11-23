@@ -225,6 +225,40 @@ test('CardDex writes GUIDE prices with license, attribution and a server-side ke
   assert.ok(!JSON.stringify(result).includes(key), 'run data must never contain the key');
 });
 
+test('CardDex reads documented nested price arrays with explicit currency', async () => {
+  const { FREE_FEEDS } = await import('../../server/ingest/freeFeeds.ts');
+  const { createFreeFeedAdapter } = await import('../../server/ingest/adapters/freeCatalog.ts');
+  const config = configFor('carddex', FREE_FEEDS);
+  const body = {
+    data: [{
+      id: 'cd-nested-1',
+      name: 'Nested Pikachu',
+      set: 'Base',
+      number: '1',
+      prices: [{
+        source: 'cardmarket',
+        currency: 'EUR',
+        trend_price: 11.4,
+        recorded_at: '2026-11-22T07:00:21.618Z',
+      }],
+    }],
+  };
+  const adapter = createFreeFeedAdapter(config);
+  const result = await adapter.fetch(fetchContext({
+    paths: ['/v1/cards?include=prices'],
+    env: {},
+    fetchImpl: async () => respond(body),
+  }));
+  assert.equal(result.items.length, 1);
+  const item = result.items[0]!;
+  assert.equal(item.payload.recordKind, 'PRICE_GUIDE');
+  assert.equal(item.payload.basis, 'GUIDE');
+  assert.equal(item.payload.price, 11.4);
+  const nestedRecord = item.payload.record as Record<string, unknown>;
+  assert.equal(nestedRecord.currency, 'EUR');
+  assert.equal(nestedRecord.observedAt, '2026-11-22T07:00:21.618Z');
+});
+
 test('Cardex keyless adapter enforces the 100-request daily cap and per-request delay', async () => {
   const { FREE_FEEDS } = await import('../../server/ingest/freeFeeds.ts');
   const { createFreeFeedAdapter, CARDEX_DAILY_REQUEST_LIMIT } = await import(

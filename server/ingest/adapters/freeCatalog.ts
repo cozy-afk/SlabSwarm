@@ -43,7 +43,7 @@ const DEFAULT_PATHS: Record<string, string[]> = {
   // paywalling Scryfall data, so this feed stays out of the commercial product.
   scryfall: ['/cards/random'],
   pokemontcg: ['/v2/cards?q=name:Pikachu'],
-  carddex: ['/v1/cards?name=Pikachu&pageSize=20'],
+  carddex: ['/v1/cards?name=Pikachu&include=prices&pageSize=20'],
   cardex: ['/cards'],
 };
 
@@ -139,6 +139,15 @@ function observedAtFrom(raw: Record<string, unknown>, capturedAt: string): strin
   );
 }
 
+function carddexObservedAt(raw: Record<string, unknown>): string | null {
+  const prices = Array.isArray(raw.prices) ? raw.prices.filter(isObject) : [];
+  for (const entry of prices) {
+    const at = nonEmpty(entry.recorded_at ?? entry.observedAt ?? entry.updated_at);
+    if (at !== null) return at;
+  }
+  return null;
+}
+
 interface PriceView {
   amount: number | null;
   currency: string;
@@ -177,6 +186,16 @@ function priceFor(
       };
     }
     return { amount: null, currency: UNKNOWN, sourceUrl: fallbackUrl };
+  }
+  if (config.sourceId === 'carddex') {
+    const prices = Array.isArray(raw.prices) ? raw.prices.filter(isObject) : [];
+    for (const entry of prices) {
+      const amount = firstPositive(entry.trend_price, entry.avg_price, entry.low_price);
+      const currency = nonEmpty(entry.currency);
+      if (amount !== null && currency !== null) {
+        return { amount, currency: currency.toUpperCase(), sourceUrl: fallbackUrl };
+      }
+    }
   }
   const amount = firstPositive(
     raw.price,
@@ -221,7 +240,8 @@ export function toFreeFeedRecord(
     currency: price.currency,
     amount: price.amount ?? UNKNOWN,
     basis,
-    observedAt: observedAtFrom(raw, capturedAt),
+    observedAt: (config.sourceId === 'carddex' ? carddexObservedAt(raw) : null)
+      ?? observedAtFrom(raw, capturedAt),
     sourceUrl: price.sourceUrl,
     license: config.license,
     attribution: ATTRIBUTION[config.sourceId] ?? `${config.sourceId} public catalog`,
