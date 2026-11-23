@@ -9,11 +9,13 @@
  * observed_date); datasets without those fields are written flat.
  */
 
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { getAnalyticsStore } from './store.ts';
+import { createAnalyticsStore, getAnalyticsStore } from './store.ts';
 import { basisOf, gameOf, observedDateOf, sourceOf } from './fields.ts';
 import type { AnalyticsSnapshot, AnalyticsStore } from './types.ts';
+import type { EvidenceRecord, MarketObservation } from '../contracts/dataProduct.ts';
 import { CONTRACT_VERSION } from '../contracts/dataProduct.ts';
 
 export interface ExportOptions {
@@ -21,11 +23,25 @@ export interface ExportOptions {
   now?: Date;
 }
 
+/** The seven derived datasets approved in the canonical prediction DB design. */
+export const LAKE_DATASET_NAMES = [
+  'evidence', 'observations', 'identities', 'events', 'forecasts', 'scores', 'findings',
+] as const;
+
+export interface LakeFile {
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
 export interface ExportedDataset {
   name: string;
   rows: number;
   path: string;
   partitionBy: string[];
+  /** Deterministic sha256 over the sorted relative paths and hashes of `files`. */
+  checksum: string;
+  files: LakeFile[];
 }
 
 export interface ParquetExportResult {
@@ -33,6 +49,19 @@ export interface ParquetExportResult {
   generatedAt: string;
   contractVersion: string;
   datasets: ExportedDataset[];
+}
+
+/** Minimal read ports shared by the ingest and canonical db repositories. */
+export interface CanonicalLakeSource {
+  evidence: { list(filters?: Record<string, unknown>): Promise<EvidenceRecord[]> };
+  marketObservations: { list(filters?: Record<string, unknown>): Promise<MarketObservation[]> };
+}
+
+export interface CanonicalLakeOptions extends ExportOptions {
+  /** Analytics store that owns the derived, append-only findings. */
+  store?: AnalyticsStore;
+  /** Non-ingest rows (identities, events, forecasts, scores) to preserve. */
+  seed?: Partial<AnalyticsSnapshot>;
 }
 
 interface TableSpec {
@@ -206,7 +235,24 @@ export function buildExportTables(snapshot: AnalyticsSnapshot): TableSpec[] {
     ]),
   };
 
-  return [evidence, observations, identities, events, forecasts, scores];
+  const findings: TableSpec = {
+    name: 'findings',
+    partitionBy: [],
+    columns: [
+      ['id', 'VARCHAR'], ['type', 'VARCHAR'], ['target_id', 'VARCHAR'],
+      ['title', 'VARCHAR'], ['summary', 'VARCHAR'], ['evidence_ids_json', 'VARCHAR'],
+      ['metrics_json', 'VARCHAR'], ['confidence', 'VARCHAR'], ['created_at', 'VARCHAR'],
+      ['source', 'VARCHAR'], ['observed_at', 'VARCHAR'], ['captured_at', 'VARCHAR'],
+      ['lineage', 'VARCHAR'],
+    ],
+    rows: snapshot.findings.map((record) => [
+      record.id, record.type, unknownToText(record.targetId), record.title, record.summary,
+      jsonArray(record.evidenceIds), JSON.stringify(record.metrics), record.confidence,
+      record.createdAt, 'discovery-sweep', record.createdAt, 'UNKNOWN', `finding:${record.id}`,
+    ]),
+  };
+
+  return [evidence, observations, identities, events, forecasts, scores, findings];
 }
 
 /** Default lake root. Override with SLABSWARM_LAKE_DIR for tests/deployments. */
@@ -220,7 +266,40 @@ function sqlLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-/** Write one dataset and return its on-disk location. */
+/** Every exported Parquet file, in a deterministic order (flat file or partitioned tree). */
+async function parquetFilesOf(target: string): Promise<string[]> {
+  const info = await stat(target);
+  if (info.isFile()) return [target];
+  const entries = await readdir(target, { recursive: true });
+  return entries
+    .map((entry) => path.join(target, String(entry)))
+    .filter((entry) => entry.endsWith('.parquet'))
+    .sort();
+}
+
+async function filesWithChecksums(target: string): Promise<LakeFile[]> {
+  const files: LakeFile[] = [];
+  for (const file of await parquetFilesOf(target)) {
+    const bytes = await readFile(file);
+    files.push({
+      path: file,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      bytes: bytes.length,
+    });
+  }
+  return files;
+}
+
+/** Order-independent digest of a dataset's files; no path or count is invented. */
+function aggregateChecksum(lakeDir: string, files: LakeFile[]): string {
+  const digest = createHash('sha256');
+  for (const file of files) {
+    digest.update(`${path.relative(lakeDir, file.path)}:${file.sha256}\n`);
+  }
+  return digest.digest('hex');
+}
+
+/** Write one dataset and return its on-disk location and checksums. */
 async function writeDataset(
   connection: { run(sql: string, values?: never[]): Promise<unknown> },
   lakeDir: string,
@@ -252,7 +331,17 @@ async function writeDataset(
     `COPY (SELECT * FROM ${spec.name}) TO ${sqlLiteral(target)} (${options.join(', ')})`,
   );
   await connection.run(`DROP TABLE ${spec.name}`);
-  return { name: spec.name, rows: spec.rows.length, path: target, partitionBy: partition };
+  const files = await filesWithChecksums(target);
+  return {
+    name: spec.name,
+    rows: spec.rows.length,
+    path: target,
+    partitionBy: partition,
+    // A partitioned dataset with zero rows produces no Parquet files; its
+    // checksum is UNKNOWN rather than a digest of a file that does not exist.
+    checksum: files.length > 0 ? aggregateChecksum(lakeDir, files) : 'UNKNOWN',
+    files,
+  };
 }
 
 /**
@@ -283,4 +372,61 @@ export async function exportAnalyticsParquet(
   const manifest = { lakeDir, generatedAt, contractVersion: CONTRACT_VERSION, datasets };
   await writeFile(path.join(lakeDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
+}
+
+/**
+ * Read the last successful lake manifest. An absent, partial or malformed
+ * manifest is reported as the literal UNKNOWN — never a guessed path, row
+ * count or checksum.
+ */
+export async function readLakeManifest(
+  lakeDir?: string,
+): Promise<ParquetExportResult | 'UNKNOWN'> {
+  const root = lakeDir ? path.resolve(lakeDir) : defaultLakeDir();
+  try {
+    const manifest = JSON.parse(
+      await readFile(path.join(root, 'manifest.json'), 'utf8'),
+    ) as ParquetExportResult;
+    if (!manifest || typeof manifest.lakeDir !== 'string' || !Array.isArray(manifest.datasets)) {
+      return 'UNKNOWN';
+    }
+    const names = manifest.datasets.map((dataset) => dataset?.name);
+    if (LAKE_DATASET_NAMES.some((name) => !names.includes(name))) return 'UNKNOWN';
+    return manifest;
+  } catch {
+    return 'UNKNOWN';
+  }
+}
+
+/**
+ * Rebuild the derived lake from canonical repositories. This is the trigger
+ * used after an approved harvest and by the admin export route; it never
+ * mutates the evidence or observation repositories it reads from.
+ */
+export async function exportCanonicalLake(
+  source: CanonicalLakeSource,
+  options: CanonicalLakeOptions = {},
+): Promise<ParquetExportResult> {
+  const [evidence, observations] = await Promise.all([
+    source.evidence.list(),
+    source.marketObservations.list(),
+  ]);
+  // Canonical db repositories expose targetIdentityId; the analytics snapshot
+  // uses targetIdentityRef. Project without mutating the source records.
+  const projectedObservations = observations.map((observation) => {
+    const row = observation as MarketObservation & { targetIdentityId?: string };
+    return row.targetIdentityRef
+      ? observation
+      : { ...observation, targetIdentityRef: row.targetIdentityId ?? 'UNKNOWN' };
+  });
+  const { store, seed, ...exportOptions } = options;
+  return exportAnalyticsParquet(
+    createAnalyticsStore({
+      ...(seed ?? store?.snapshot() ?? {}),
+      evidence,
+      observations: projectedObservations,
+      findings: store?.listFindings() ?? seed?.findings ?? [],
+    }),
+    exportOptions,
+  );
 }

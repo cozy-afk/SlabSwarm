@@ -153,7 +153,10 @@ export async function createApp() {
   });
   mountDbRoutes(app, { requireAuth: operatorAuth.requireAuth });
   app.use(createIngestRouter(dataRepositories));
-  app.use(createAnalyticsRouter({ store: analyticsStore }));
+  // The derived lake is rebuildable, but its export trigger stays behind the
+  // existing operator gate. No new listener or public route is introduced.
+  app.use('/api/admin/export-parquet', operatorAuth.requireAuth);
+  app.use(createAnalyticsRouter({ store: analyticsStore, canonical: dataRepositories }));
   mountIntelligenceRoutes(app, operatorAuth.requireAuth);
 
   // --- Self-Hosted Health Check Endpoint (Docker / systemd / Reverse Proxy) ---

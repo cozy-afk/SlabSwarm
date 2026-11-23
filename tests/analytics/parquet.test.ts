@@ -65,25 +65,38 @@ function seededStore() {
     }],
     forecasts: [makeForecast({ id: 'f-1' })],
     scores: [makeScore({ id: 's-1', forecastId: 'f-1' })],
+    findings: [{
+      id: 'finding-1', type: 'ACTIVE_CARD', targetId: 'id-1',
+      title: 'Active card', summary: 'Three recent observations.',
+      evidenceIds: ['e-1', 'e-2'], confidence: 'MEDIUM',
+      metrics: { count: 2 }, createdAt: FIXED_NOW.toISOString(),
+    }],
   });
 }
 
-test('export writes all six derived datasets with a manifest and exact row counts', async () => {
+test('export writes all seven derived datasets with a manifest and exact row counts', async () => {
   const result = await exportAnalyticsParquet(seededStore(), {
     lakeDir: path.join(lakeDir, 'full'),
     now: FIXED_NOW,
   });
 
   assert.deepEqual(result.datasets.map((d) => d.name), [
-    'evidence', 'observations', 'identities', 'events', 'forecasts', 'scores',
+    'evidence', 'observations', 'identities', 'events', 'forecasts', 'scores', 'findings',
   ]);
-  assert.deepEqual(result.datasets.map((d) => d.rows), [2, 2, 1, 1, 1, 1]);
+  assert.deepEqual(result.datasets.map((d) => d.rows), [2, 2, 1, 1, 1, 1, 1]);
   assert.equal(result.generatedAt, FIXED_NOW.toISOString());
   assert.ok(existsSync(path.join(lakeDir, 'full', 'manifest.json')));
   for (const dataset of result.datasets) {
     assert.ok(existsSync(dataset.path), dataset.path);
     if (dataset.partitionBy.length === 0) assert.match(dataset.path, /\.parquet$/);
     else assert.equal(dataset.path, path.join(lakeDir, 'full', dataset.name));
+    if (dataset.files.length === 0) {
+      assert.equal(dataset.rows, 0);
+      assert.equal(dataset.checksum, 'UNKNOWN');
+    } else {
+      assert.match(dataset.checksum, /^[a-f0-9]{64}$/);
+      assert.ok(dataset.files.every((file) => existsSync(file.path)));
+    }
   }
 });
 
@@ -153,8 +166,8 @@ test('Parquet readback preserves explicit basis, currency, provenance and UNKNOW
 test('empty snapshot still produces a complete, rebuildable empty lake', async () => {
   const root = path.join(lakeDir, 'empty');
   const first = await exportAnalyticsParquet(makeStore(), { lakeDir: root, now: FIXED_NOW });
-  assert.deepEqual(first.datasets.map((d) => d.rows), [0, 0, 0, 0, 0, 0]);
-  assert.equal(first.datasets.length, 6);
+  assert.deepEqual(first.datasets.map((d) => d.rows), [0, 0, 0, 0, 0, 0, 0]);
+  assert.equal(first.datasets.length, 7);
 
   const second = await exportAnalyticsParquet(makeStore(), { lakeDir: root, now: FIXED_NOW });
   assert.deepEqual(second.datasets.map((d) => d.rows), first.datasets.map((d) => d.rows));

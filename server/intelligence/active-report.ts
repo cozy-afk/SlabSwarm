@@ -18,6 +18,7 @@ import {
   type PriceBand,
 } from '../contracts/activeReport.ts';
 import { runDiscoverySweep } from '../analytics/discovery.ts';
+import { readLakeManifest, type ParquetExportResult } from '../analytics/parquet.ts';
 import { gameOf } from '../analytics/fields.ts';
 import { createAnalyticsStore } from '../analytics/store.ts';
 import type { IdentityRecord } from '../analytics/types.ts';
@@ -53,6 +54,8 @@ export interface ActiveReportOptions {
   identities?: IdentityRecord[];
   /** Override the computed sweep findings (tests/injected Phase 3 lane). */
   findings?: DiscoveryFinding[];
+  /** Lake proof: exported file paths, row counts and sha256 checksums. UNKNOWN until an export succeeds. */
+  lakeManifest?: ParquetExportResult | typeof UNKNOWN;
 }
 
 export interface ActiveReportMeta {
@@ -71,6 +74,8 @@ export interface ActiveReportMeta {
     findingCount: number;
     cardCount: number;
   };
+  /** Last successful Parquet export, or the literal UNKNOWN when none exists. */
+  lakeManifest: ParquetExportResult | typeof UNKNOWN;
 }
 
 export interface ActiveReportResult {
@@ -226,6 +231,7 @@ export async function buildActiveReport(
   const minActiveObservations = options.minActiveObservations ?? DEFAULT_MIN_ACTIVE_OBSERVATIONS;
   const limit = options.limit ?? DEFAULT_LIMIT;
   const repositories = options.repositories ?? getActiveReportRepositories();
+  const lakeManifest = options.lakeManifest ?? await readLakeManifest();
 
   const [evidenceRows, observations] = await Promise.all([
     repositories.evidence.list(),
@@ -374,6 +380,7 @@ export async function buildActiveReport(
         findingCount: findings.length,
         cardCount: rankedCards.length,
       },
+      lakeManifest,
     },
   };
 }
