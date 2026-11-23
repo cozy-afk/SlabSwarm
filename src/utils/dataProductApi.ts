@@ -151,10 +151,9 @@ export function fetchFreeFeeds(): Promise<ApiEnvelope<FreeFeedsResponse>> {
 }
 
 export function harvestFreeFeed(
-  sourceId: string,
-  capturedAt?: string
+  sourceId: string
 ): Promise<ApiEnvelope<FreeFeedHarvestResponse>> {
-  return postEnvelope<FreeFeedHarvestResponse>(buildRoute(ROUTES.freeFeedsHarvest, { sourceId }), capturedAt ? { capturedAt } : {});
+  return postEnvelope<FreeFeedHarvestResponse>(buildRoute(ROUTES.freeFeedsHarvest, { sourceId }), {});
 }
 
 // --- Web source review queue -------------------------------------------------

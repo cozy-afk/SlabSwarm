@@ -74,6 +74,22 @@ function publicFreeFeed(config: FreeFeedConfig) {
   };
 }
 
+/** Collect the lane's configured secret values from the injected env map (or
+ * the server process environment) so the runner redacts them from every error
+ * before it is returned or persisted in a run record. These values are never
+ * copied into response data or public feed metadata. */
+function freeFeedSecretValues(env: Record<string, unknown> | undefined): string[] {
+  const source = env ?? (process.env as Record<string, unknown>);
+  const values: string[] = [];
+  for (const config of FREE_FEEDS) {
+    const name = config.apiKeyEnv;
+    if (!name) continue;
+    const value = source[name];
+    if (typeof value === 'string' && value.length >= 4) values.push(value);
+  }
+  return values;
+}
+
 function respond<T>(
   res: Response,
   status: number,
@@ -136,6 +152,9 @@ export interface IngestRouterOptions {
   freeFeeds?: {
     fetchImpl?: FreeFeedFetchImpl;
     env?: Record<string, unknown>;
+    /** Deterministic clock for capture timestamps. Tests inject this; the
+     * HTTP request body is never allowed to choose capturedAt. */
+    now?: () => Date;
   };
 }
 
@@ -154,6 +173,7 @@ export function createIngestRouter(
   const freeFetch: FreeFeedFetchImpl =
     options.freeFeeds?.fetchImpl ?? (globalThis.fetch as unknown as FreeFeedFetchImpl);
   const freeFeedEnv = options.freeFeeds?.env;
+  const freeFeedSecrets = freeFeedSecretValues(freeFeedEnv);
   // One adapter per feed: Cardex's daily request counter must survive across
   // separate harvest requests within the same process.
   const freeFeedAdapters = new Map(
@@ -212,17 +232,15 @@ export function createIngestRouter(
       notFound(res, 'free feed');
       return;
     }
-    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
-      ? req.body as Record<string, unknown>
-      : {};
-    const capturedAt = typeof body.capturedAt === 'string' && Number.isFinite(Date.parse(body.capturedAt))
-      ? body.capturedAt
-      : new Date().toISOString();
+    // capturedAt is server-generated from the injected clock (production: the
+    // real clock). The HTTP body is deliberately never read for provenance.
+    const capturedAt = (options.freeFeeds?.now?.() ?? new Date()).toISOString();
     // Failures are captured in the run record, not thrown at the caller: the
     // view can surface the counts and the plain-text errors deterministically.
     const result = await runIngest(freeFeedAdapters.get(config.sourceId)!, repos, {
       mode: 'backfill',
       capturedAt,
+      secrets: freeFeedSecrets,
       options: { fetchImpl: freeFetch, ...(freeFeedEnv ? { env: freeFeedEnv } : {}) },
     });
     const { counts } = result.run;

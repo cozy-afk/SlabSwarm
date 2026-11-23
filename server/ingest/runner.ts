@@ -46,6 +46,7 @@ export async function runIngest(
 
   const mode = opts.mode ?? 'forward';
   const capturedAt = opts.capturedAt ?? new Date().toISOString();
+  const secrets = opts.secrets ?? [];
   const previous = mode === 'forward' ? await repos.runs.lastSuccessful(adapter.sourceId) : null;
   const watermarkIn = mode === 'forward' ? (previous?.watermarkOut ?? null) : null;
   const cursorIn = opts.cursor ?? (mode === 'forward' ? (previous?.cursorOut ?? null) : null);
@@ -91,7 +92,7 @@ export async function runIngest(
     for (const parseError of parseErrors) {
       errors.push({
         nativeId: parseError.nativeId ?? null,
-        message: sanitizeError(parseError.message),
+        message: sanitizeError(parseError.message, secrets),
       });
       counts.failed += 1;
     }
@@ -136,7 +137,7 @@ export async function runIngest(
         observed.push(item.observedAt);
       } catch (error) {
         counts.failed += 1;
-        errors.push({ nativeId: item.nativeId, message: sanitizeError(error) });
+        errors.push({ nativeId: item.nativeId, message: sanitizeError(error, secrets) });
       }
     }
 
@@ -158,7 +159,7 @@ export async function runIngest(
       finishedAt: new Date().toISOString(),
     });
   } catch (error) {
-    errors.push({ nativeId: null, message: sanitizeError(error) });
+    errors.push({ nativeId: null, message: sanitizeError(error, secrets) });
     counts.failed += 1;
     status = 'FAILED';
     await repos.runs.update(run.id, {
