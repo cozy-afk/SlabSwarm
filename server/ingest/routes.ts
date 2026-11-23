@@ -145,6 +145,9 @@ export interface IngestRouterOptions {
     sources?: WebSourceConfig[];
     fetchImpl?: WebFetchImpl;
     now?: () => number;
+    /** Deterministic clock for capture timestamps. Tests inject this; the
+     * HTTP request body is never allowed to choose capturedAt. */
+    captureNow?: () => Date;
   };
   /** Free feeds are keyless by default. Tests inject the fetch so a harvest
    * never makes a live third-party call; production falls back to global fetch
@@ -400,9 +403,9 @@ export function createIngestRouter(
     const sources = requested === null
       ? webRegistry.enabled()
       : webRegistry.enabled().filter((source) => requested.includes(source.id));
-    const capturedAt = typeof body.capturedAt === 'string' && Number.isFinite(Date.parse(body.capturedAt))
-      ? body.capturedAt
-      : undefined;
+    // capturedAt is server-generated from the injected clock (production: the
+    // real clock). The HTTP body is deliberately never read for provenance.
+    const capturedAt = (options.web?.captureNow?.() ?? new Date()).toISOString();
     const results = await harvestWebSources({
       repos,
       registry: webRegistry,
