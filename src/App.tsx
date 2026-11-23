@@ -5,6 +5,7 @@ import {
   Bot,
   Database,
   FileText,
+  Globe,
   GraduationCap,
   Link2,
   Menu,
@@ -23,11 +24,13 @@ import { MarketIntelligenceView } from './components/product/MarketIntelligenceV
 import { ResearchSwarmView } from './components/product/ResearchSwarmView.tsx';
 import { SourcesView } from './components/product/SourcesView.tsx';
 import { SqlLabView } from './components/product/SqlLabView.tsx';
+import { WebSourcesView } from './components/product/WebSourcesView.tsx';
 import type { SwarmRoutingConfig } from './types/graph.ts';
 import { apiFetch } from './utils/apiClient.ts';
 
 type ActiveTab =
   | 'sources'
+  | 'web-sources'
   | 'catalog'
   | 'intelligence'
   | 'active-report'
@@ -48,6 +51,12 @@ const NAV_ITEMS: Array<{
     label: 'Sources',
     sublabel: 'Evidence & Observations',
     icon: Database,
+  },
+  {
+    id: 'web-sources',
+    label: 'Web Sources',
+    sublabel: 'Harvest Review Queue',
+    icon: Globe,
   },
   {
     id: 'catalog',
@@ -133,6 +142,8 @@ export default function App() {
     switch (activeTab) {
       case 'sources':
         return <SourcesView />;
+      case 'web-sources':
+        return <WebSourcesView />;
       case 'catalog':
         return <CatalogView />;
       case 'intelligence':
