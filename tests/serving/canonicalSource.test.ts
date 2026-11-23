@@ -27,6 +27,15 @@ let baseUrl: string;
 let authHeaders: Record<string, string>;
 let createApp: typeof import('../../server.ts')['createApp'];
 
+async function post(route: string, body: unknown): Promise<{ status: number; body: any }> {
+  const response = await fetch(`${baseUrl}${route}`, {
+    method: 'POST',
+    headers: { ...authHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'slabswarm-canonical-source-'));
   process.env.SLABGRAPH_DATA_DIR = path.join(root, 'data');
@@ -95,4 +104,21 @@ test('active report reads the injected canonical repository', async () => {
     cards.some((card: { id?: string }) => card.id === TARGET),
     `expected canonical observation ${TARGET} in active report, got ids ${cards.map((c: any) => c.id).join(',')}`,
   );
+});
+
+test('research run accepts the UI payload and uses canonical evidence', async () => {
+  const { status, body } = await post('/api/swarm/research/run', {
+    question: 'What does the evidence say about this card?',
+    mode: 'EVIDENCE_FIRST',
+  });
+  assert.ok(status === 200 || status === 201, `research run status ${status}: ${JSON.stringify(body)}`);
+  assert.ok(body.data && typeof body.data.id === 'string', 'research run must return an envelope with an id');
+  assert.ok(body.meta && typeof body.meta.requestId === 'string', 'research run must use the response envelope');
+  assert.equal(body.data.targetId, TARGET);
+
+  const detail = await fetch(`${baseUrl}/api/swarm/runs/${body.data.id}`, { headers: authHeaders });
+  const detailBody = await detail.json();
+  assert.equal(detail.status, 200);
+  assert.ok(detailBody.data && detailBody.data.id === body.data.id);
+  assert.ok(detailBody.meta && typeof detailBody.meta.requestId === 'string');
 });

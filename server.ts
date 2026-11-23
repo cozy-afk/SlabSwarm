@@ -264,7 +264,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   // UI contract routes must precede the legacy intelligence router: the UI
   // reads these three paths with useEnvelope() and needs data+meta, not the
   // old bare responses. No new listener; same operator gate.
-  app.use(createDataProductContractRouter(dataRepositories, operatorAuth.requireAuth));
+  app.use(createDataProductContractRouter(canonicalRepositories, operatorAuth.requireAuth));
 
   mountDbRoutes(app, { requireAuth: operatorAuth.requireAuth });
   app.use(createIngestRouter(dataRepositories));

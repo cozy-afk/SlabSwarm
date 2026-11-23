@@ -9,12 +9,14 @@
  */
 
 import express from 'express';
-import type { RequestHandler, Response, Router } from 'express';
+import type { Request, RequestHandler, Response, Router } from 'express';
 
 import type { MarketObservation } from '../contracts/dataProduct.ts';
 import { forecastRepository } from '../forecast/repository.ts';
 import { getLearningState } from '../forecast/learning.ts';
-import { envelope, newContext, UNKNOWN } from './catalog.ts';
+import { runSwarmResearch, swarmRunStore } from '../swarm/run.ts';
+import type { EvidenceItem } from '../swarm/tools.ts';
+import { envelope, errorEnvelope, newContext, UNKNOWN } from './catalog.ts';
 
 interface ObservationListSource {
   marketObservations: {
@@ -29,6 +31,45 @@ function send(res: Response, data: unknown, source: string, warnings: string[]):
     currency: UNKNOWN,
     warnings,
   }));
+}
+
+function bodyObject(req: Request): Record<string, unknown> {
+  return req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+}
+
+function isoText(value: unknown, fallback: string): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Date.parse(value))) {
+    return new Date(Date.parse(value)).toISOString();
+  }
+  return fallback;
+}
+
+function bandOf(value: unknown): EvidenceItem['confidence'] {
+  if (value === 'HIGH' || value === 'MEDIUM' || value === 'LOW') return value;
+  if (typeof value === 'number') return value >= 0.8 ? 'HIGH' : value >= 0.5 ? 'MEDIUM' : 'LOW';
+  return 'LOW';
+}
+
+function evidenceForTarget(rows: MarketObservation[], targetId: string): EvidenceItem[] {
+  return rows
+    .filter((row) => row.targetIdentityRef === targetId)
+    .map((row) => {
+      const raw = row as unknown as Record<string, unknown>;
+      return {
+        id: row.evidenceId || row.id,
+        source: typeof raw.sourceId === 'string' ? raw.sourceId : 'canonical.marketObservations',
+        observedAt: isoText(row.observedAt, UNKNOWN),
+        capturedAt: isoText(raw.capturedAt ?? row.observedAt, UNKNOWN),
+        summary: `${row.basis} ${row.amount} ${row.currency} observed for ${targetId}`,
+        basis: row.basis,
+        confidence: bandOf(raw.confidence),
+        kind: 'MARKET_OBSERVATION',
+        amount: row.amount,
+      };
+    });
 }
 
 export function createDataProductContractRouter(
@@ -72,6 +113,55 @@ export function createDataProductContractRouter(
   router.get('/api/learning/state', ...middleware, (_req, res) => {
     send(res, getLearningState(), 'forecast.learning', [
       'Learning state is derived from scored outcomes and benchmark gates.',
+    ]);
+  });
+
+  router.post('/api/swarm/research/run', ...middleware, async (req, res) => {
+    const body = bodyObject(req);
+    const rows = await repositories.marketObservations.list();
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const target = row.targetIdentityRef;
+      if (target && target !== UNKNOWN) counts.set(target, (counts.get(target) ?? 0) + 1);
+    }
+    const selected = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    const bodyTarget = typeof body.targetId === 'string' ? body.targetId.trim() : '';
+    const targetId = bodyTarget || selected?.[0] || '';
+    const evidence = evidenceForTarget(rows, targetId);
+    if (!targetId || evidence.length === 0) {
+      res.status(422).json(errorEnvelope(
+        'No canonical evidence is available for a research run.',
+        'NO_CANONICAL_EVIDENCE',
+        newContext(),
+        { warnings: ['A question is not evidence; no facts are invented to run research.'] },
+      ));
+      return;
+    }
+    const run = runSwarmResearch({
+      targetId,
+      evidence,
+      ...(typeof body.maxItems === 'number' ? { maxItems: body.maxItems } : {}),
+      ...(typeof body.asOf === 'string' ? { asOf: body.asOf } : {}),
+    });
+    res.status(201).json(envelope(run, newContext(), {
+      source: 'canonical.marketObservations',
+      basis: UNKNOWN as never,
+      currency: UNKNOWN,
+      warnings: [
+        'Role claims are proposals, never canonical facts.',
+        'The question text is not used as evidence.',
+      ],
+    }));
+  });
+
+  router.get('/api/swarm/runs/:id', ...middleware, (req, res) => {
+    const run = swarmRunStore.get(req.params.id);
+    if (!run) {
+      res.status(404).json(errorEnvelope('Swarm run not found', 'SWARM_RUN_NOT_FOUND', newContext()));
+      return;
+    }
+    send(res, run, 'swarmRunStore', [
+      'Role claims are proposals, never canonical facts.',
     ]);
   });
 
