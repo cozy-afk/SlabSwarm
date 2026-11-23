@@ -23,6 +23,7 @@ import {
   searchCatalog,
   searchLedgerCatalog,
   type CatalogItemView,
+  type LedgerEvidenceReader,
   type MarketBasis,
   type RequestContext,
 } from './catalog.ts';
@@ -31,8 +32,10 @@ import {
   buildMarketSnapshot,
   buildPriceSummary,
   loadFacts,
+  type ObservationLedger,
 } from './market.ts';
 import { graphEngine } from '../graphEngine.ts';
+import type { EvidenceRecord } from '../contracts/dataProduct.ts';
 import { createInMemoryRepositories } from '../ingest/store.ts';
 import type { IngestRepositories } from '../ingest/types.ts';
 
@@ -41,7 +44,10 @@ const defaultRepositories = createInMemoryRepositories();
 
 export interface ServingRouteOptions {
   engine?: Pick<typeof graphEngine, 'getState'>;
-  repositories?: IngestRepositories;
+  repositories?: {
+    evidence: LedgerEvidenceReader & { get(id: string): Promise<EvidenceRecord | null> };
+    marketObservations: ObservationLedger;
+  };
   now?: () => Date;
   defaultLimit?: number;
   maxLimit?: number;

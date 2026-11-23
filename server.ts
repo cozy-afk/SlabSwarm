@@ -179,6 +179,8 @@ export interface CreateAppOptions {
   matchQaFloor?: number;
   /** Task 17: inject the in-process tracking store; routes stay behind the gate. */
   trackingStore?: TrackingStore;
+  /** Canonical read source for report, serving and lake. Production uses Postgres. */
+  canonicalRepositories?: Repositories;
 }
 
 // Build the Express application with all routes. Exported so API tests can
@@ -194,7 +196,10 @@ export async function createApp(options: CreateAppOptions = {}) {
   // so a seed written by the CLI is visible to the running server. No lane
   // opens a listener; all stay on the existing internal bind and auth gate.
   const dataRepositories = createDurableRepositories();
-  setActiveReportRepositories(dataRepositories);
+  // Durable ledger writes stay on dataRepositories; canonical reads (report,
+  // serving, lake) must use the same Postgres store that promotion writes.
+  const canonicalRepositories = options.canonicalRepositories ?? createDefaultRepositories();
+  setActiveReportRepositories(canonicalRepositories);
   const [evidenceSeed, observationSeed] = await Promise.all([
     dataRepositories.evidence.list(),
     dataRepositories.marketObservations.list(),
@@ -216,15 +221,14 @@ export async function createApp(options: CreateAppOptions = {}) {
   // without any HTTP call, new listener or model involvement.
   matchQaStore.attachToHost();
 
-  // Canonical observations now arrive from two lanes: the ingest ledger and
-  // the SQL-backed review queue. Union them by id so an approved web harvest
-  // is actually present in the rebuilt lake, not silently invisible there.
+  // Canonical observations come from the canonical store that promotion writes,
+  // unioned with the SQL-backed review queue so approved web harvests appear.
   const lakeSource: CanonicalLakeSource = options.lakeSource ?? {
-    evidence: { list: async () => dataRepositories.evidence.list() },
+    evidence: { list: async () => canonicalRepositories.evidence.list() },
     marketObservations: {
       list: async () => {
         const [ingested, reviewed] = await Promise.all([
-          dataRepositories.marketObservations.list(),
+          canonicalRepositories.marketObservations.list(),
           harvestRepositories.marketObservations.list(),
         ]);
         const byId = new Map<string, (typeof ingested)[number]>();
@@ -2255,7 +2259,7 @@ export async function createApp(options: CreateAppOptions = {}) {
 
   // Serving routes come after the specific routes above but before the /api
   // catch-all: `/api/market/:id` must not shadow `/api/market/observations`.
-  mountServingRoutes(app, { repositories: dataRepositories });
+  mountServingRoutes(app, { repositories: canonicalRepositories });
 
   // Return JSON 404 for unknown /api/* paths instead of serving index.html
   app.all('/api/*', (_req, res) => {

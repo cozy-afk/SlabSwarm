@@ -28,7 +28,10 @@ import type {
   MarketObservation,
 } from '../contracts/dataProduct.ts';
 import { createInMemoryRepositories } from '../ingest/store.ts';
-import type { IngestRepositories } from '../ingest/types.ts';
+interface ReportRepositories {
+  evidence: { list(): Promise<EvidenceRecord[]> };
+  marketObservations: { list(): Promise<MarketObservation[]> };
+}
 
 const DAY_MS = 86_400_000;
 const DEFAULT_ACTIVE_WINDOW_DAYS = 30;
@@ -49,7 +52,7 @@ export interface ActiveReportOptions {
   staleDays?: number;
   minActiveObservations?: number;
   limit?: number;
-  repositories?: IngestRepositories;
+  repositories?: ReportRepositories;
   /** Optional canonical identity records for display names/set/game. */
   identities?: IdentityRecord[];
   /** Override the computed sweep findings (tests/injected Phase 3 lane). */
@@ -84,13 +87,13 @@ export interface ActiveReportResult {
 }
 
 /** Integrator hook: the harvest worker replaces this with its file-backed store. */
-let injectedRepositories: IngestRepositories | null = null;
+let injectedRepositories: ReportRepositories | null = null;
 
-export function setActiveReportRepositories(repositories: IngestRepositories): void {
+export function setActiveReportRepositories(repositories: ReportRepositories): void {
   injectedRepositories = repositories;
 }
 
-export function getActiveReportRepositories(): IngestRepositories {
+export function getActiveReportRepositories(): ReportRepositories {
   if (!injectedRepositories) injectedRepositories = createInMemoryRepositories();
   return injectedRepositories;
 }

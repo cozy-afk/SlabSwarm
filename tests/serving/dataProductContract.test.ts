@@ -12,6 +12,9 @@ import path from 'node:path';
 import { after, before, test } from 'node:test';
 import type { Express } from 'express';
 
+import { createInMemoryRepositories } from '../../server/ingest/store.ts';
+import { setActiveReportRepositories } from '../../server/intelligence/active-report.ts';
+
 const PASSCODE = 'contract-test-passcode';
 const originalDataDir = process.env.SLABGRAPH_DATA_DIR;
 const originalTestMode = process.env.SLABGRAPH_TEST_MODE;
@@ -42,6 +45,7 @@ before(async () => {
   process.env.SLABGRAPH_DATA_DIR = path.join(root, 'data');
   process.env.SLABGRAPH_TEST_MODE = '1';
   process.env.SLABGRAPH_ADMIN_PASSCODE = PASSCODE;
+  setActiveReportRepositories(createInMemoryRepositories());
   ({ createApp } = await import(`../../server.ts?contract=${Date.now()}`));
   const app: Express = await createApp();
   const bound = await new Promise<Server>((resolve, reject) => {
