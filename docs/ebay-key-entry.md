@@ -23,3 +23,13 @@ python3 /opt/slabswarm/scripts/set-ebay-keys.py --env-file /path/to/test.env
 Verified with fake credentials on a scratch file: prompts did not echo secrets, file mode was 0600, and only the five managed keys appeared in the output summary.
 
 This script does not enable an eBay feed. It only stores credentials. Marketplace Insights and price derivation still need written eBay permission and Buy API approval.
+
+## Importing a pasted block
+
+If you do not want to type the fields yourself, copy the whole keys block from eBay — including its labels — into a local text file, then run:
+
+```bash
+python3 /opt/slabswarm/scripts/import-ebay-keys.py --input ~/ebay-keys-paste.txt
+```
+
+The importer recognizes labels such as `Client ID`, `App ID`, `Cert ID`, `Client secret` and `Refresh token`. It writes the same private `.env` with mode 0600 and reports only field names. It refuses unlabeled blobs and tells you which line numbers need labels; it will not guess which key is which. Delete the paste file yourself when done.
