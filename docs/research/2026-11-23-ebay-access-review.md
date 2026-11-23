@@ -52,7 +52,7 @@ derivation at this time.
 The primary getting-started guide describes the Sandbox as "a self-contained
 virtual testing environment" and says: "Items listed and sold in the Sandbox
 aren't real transactions, and all listing fees and item purchases are paid with
-fictional money" [75]. Marketplace Insights is the Buy API that retrieves "the
+fictional money" [80]. Marketplace Insights is the Buy API that retrieves "the
 sales history of items sold on eBay" and is flagged as a Limited Release [68].
 
 **Sandbox transactions are mocks. Sandbox cannot supply real sold prices**, so it
@@ -67,15 +67,15 @@ would require one was created. A Sandbox keyset, if wanted later, is an owner
 prerequisite below; keys must be stored server-side through the vault or the
 private `.env`, never in chat, code, tests or docs.
 
-## 3. Access path from the primary docs [68][75]
+## 3. Access path from the primary docs [68][80]
 
 - eBay Developers Program membership is free: "eBay Developers Program
   membership is free, and you can use virtually any programming language to
-  interface with eBay APIs" [75]. Joining requires a business email and
-  acceptance of the API License Agreement [75].
+  interface with eBay APIs" [80]. Joining requires a business email and
+  acceptance of the API License Agreement [80].
 - Keysets are environment-specific: "For your application to run in the Sandbox
   or Production environment, it needs to have the appropriate keyset for that
-  environment" [75].
+  environment" [80].
 - Buy APIs are not open self-service: "The Buy APIs listed above are intended for
   certain approved eBay partners based on their application. Acceptance of
   applications is based on the proposed business model, as well as a formal
@@ -119,4 +119,4 @@ Production keyset, Buy API approval and the growth-check volumes.
 Sources:
 [67] https://developer.ebay.com/develop/apis/api-license-agreement — eBay API License Agreement
 [68] https://developer.ebay.com/develop/get-started/get-started-on-a-buying-application — eBay Get Started on a Buying Application
-[75] https://developer.ebay.com/api-docs/static/gs_ebay-rest-getting-started-landing.html — eBay Get Started with eBay APIs (linked from Step 1 of [68])
+[80] https://developer.ebay.com/api-docs/static/gs_ebay-rest-getting-started-landing.html
