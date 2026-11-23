@@ -89,10 +89,16 @@ function toDb(table: string, row: Row): Row {
     let value = rawValue === undefined ? null : rawValue;
     // node-postgres passes strings to JSONB as raw text. A plain string that
     // is not already JSON must be quoted or Postgres rejects the parameter.
-    if (meta.jsonColumns.has(dbName) && typeof value === 'string') {
-      try {
-        JSON.parse(value);
-      } catch {
+    if (meta.jsonColumns.has(dbName) && value !== null) {
+      if (typeof value === 'string') {
+        try {
+          JSON.parse(value);
+        } catch {
+          value = JSON.stringify(value);
+        }
+      } else {
+        // node-postgres encodes arrays as Postgres array literals, which are
+        // not valid JSONB. Serialize explicitly.
         value = JSON.stringify(value);
       }
     }

@@ -32,6 +32,20 @@ test('SQL store serializes plain strings written to JSONB columns', async () => 
   assert.ok([...calls[0].params].includes('"plain text"'));
 });
 
+test('SQL store serializes JSONB arrays as JSON text', async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const executor = {
+    async query(sql: string, params: readonly unknown[] = []) {
+      calls.push({ sql, params });
+      return { rows: [{}] };
+    },
+  };
+  const store = createSqlStore(executor as unknown as Parameters<typeof createSqlStore>[0]);
+  await store.insert('research_notes', { question: 'q', subquestions: ['a', 'b'], evidenceIds: ['e1'] });
+  assert.ok([...calls[0].params].includes('["a","b"]'));
+  assert.ok([...calls[0].params].includes('["e1"]'));
+});
+
 test('SQL store ignores unknown filter names instead of emitting bad SQL', async () => {
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const executor = {
