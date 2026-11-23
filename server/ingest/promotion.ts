@@ -20,6 +20,12 @@ export interface PromotionResult {
   skipped: number;
   duplicates: number;
   errors: string[];
+  /**
+   * Guard output: candidate ids with a finite amount, explicit basis and
+   * PARSED/PENDING status that still have no observation after this run.
+   * Empty means the priced-candidate coverage invariant holds.
+   */
+  unpromotedPriced: string[];
 }
 
 export interface PromoteOptions {
@@ -52,15 +58,35 @@ function observationKey(
   return `${evidenceId}\u0000${targetIdentityRef}\u0000${basis}`;
 }
 
-/** Only a finite, explicitly based, successfully parsed candidate can be promoted. */
-function isAdmissible(candidate: IngestCandidate): candidate is AdmissibleCandidate {
-  return candidate.parseStatus !== 'FAILED'
-    && typeof candidate.amount === 'number'
+/** Shared with the coverage report so both use the same duplicate definition. */
+export function promotionKey(
+  row: Pick<IngestCandidate, 'evidenceId' | 'targetIdentityRef' | 'basis'>,
+): string {
+  return observationKey(row.evidenceId, row.targetIdentityRef, row.basis);
+}
+
+/**
+ * Priced means a finite, non-negative amount and an explicit, valid basis.
+ * A null amount is UNKNOWN (catalog-only), never zero, and is not priced.
+ */
+export function isPricedCandidate(candidate: IngestCandidate): boolean {
+  return typeof candidate.amount === 'number'
     && Number.isFinite(candidate.amount)
     && candidate.amount >= 0
     && typeof candidate.basis === 'string'
     && VALID_BASES.has(candidate.basis)
-    && candidate.basis !== 'UNKNOWN'
+    && candidate.basis !== 'UNKNOWN';
+}
+
+/** PENDING evidence can still be priced; promotion never rewrites parse status. */
+export function isParsedOrPending(candidate: IngestCandidate): boolean {
+  return candidate.parseStatus === 'PARSED' || candidate.parseStatus === 'PENDING';
+}
+
+/** Only a finite, explicitly based, successfully parsed candidate can be promoted. */
+function isAdmissible(candidate: IngestCandidate): candidate is AdmissibleCandidate {
+  return isPricedCandidate(candidate)
+    && candidate.parseStatus !== 'FAILED'
     && typeof candidate.evidenceId === 'string'
     && candidate.evidenceId !== ''
     && typeof candidate.targetIdentityRef === 'string'
@@ -108,6 +134,7 @@ export async function promoteCandidates(
     skipped: 0,
     duplicates: 0,
     errors: [],
+    unpromotedPriced: [],
   };
 
   const [candidates, existing] = await Promise.all([
@@ -115,6 +142,7 @@ export async function promoteCandidates(
     repos.marketObservations.list(),
   ]);
   const keys = new Set<string>();
+  const failedKeys = new Set<string>();
   for (const observation of existing) {
     if (
       typeof observation.evidenceId === 'string' &&
@@ -164,8 +192,31 @@ export async function promoteCandidates(
       keys.add(key);
       result.promoted += 1;
     } catch (error) {
+      failedKeys.add(key);
       result.errors.push(sanitizeError(error));
     }
+  }
+
+  // Guard: every priced candidate with a finite amount, an explicit basis and
+  // PARSED/PENDING raw parse status must end up with an observation. Write
+  // failures are already in `errors`; anything else left over is a silent gap
+  // and is reported as an explicit guard error instead.
+  for (const candidate of candidates) {
+    if (!isPricedCandidate(candidate) || !isParsedOrPending(candidate)) continue;
+    const key = promotionKey(candidate);
+    if (keys.has(key)) continue;
+    result.unpromotedPriced.push(candidateIdOf(candidate));
+  }
+  const unattempted = candidates.filter((candidate) =>
+    isPricedCandidate(candidate)
+    && isParsedOrPending(candidate)
+    && !keys.has(promotionKey(candidate))
+    && !failedKeys.has(promotionKey(candidate)),
+  );
+  if (unattempted.length > 0) {
+    result.errors.push(
+      `promotion guard: ${unattempted.length} priced PARSED/PENDING candidate(s) left without an observation`,
+    );
   }
 
   return result;

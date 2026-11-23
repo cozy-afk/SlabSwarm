@@ -88,6 +88,40 @@ export interface Forecast {
   status: 'HYPOTHESIS' | 'SCORED' | 'REJECTED';
 }
 
+/**
+ * Read-only census of the ingest ledger. Produced by scripts/data-coverage.ts
+ * from the durable repositories; no field is inferred or invented. A priced
+ * candidate has a finite amount and an explicit (non-UNKNOWN) basis. Missing
+ * amounts remain catalog-only, never zero.
+ */
+export interface CoverageSnapshot {
+  /** Row counts of the durable ledger tables read for this census. */
+  tables: {
+    evidence: number;
+    candidates: number;
+    observations: number;
+    runs: number;
+  };
+  /** Candidate counts keyed by the source that produced them. */
+  bySource: Record<string, number>;
+  /** Candidate counts keyed by explicit basis, including UNKNOWN. */
+  byBasis: Record<string, number>;
+  /** Evidence counts keyed by raw parse status (not promotion status). */
+  byParseStatus: Record<string, number>;
+  /** Evidence counts keyed by declared trust tier, including UNKNOWN. */
+  byTrustTier: Record<string, number>;
+  /** Candidates with a finite amount and an explicit basis. */
+  pricedCandidates: number;
+  /** Candidates without a price; UNKNOWN stays UNKNOWN, never zero. */
+  catalogOnly: number;
+  /** Canonical market observation rows already present in the ledger. */
+  promotedObservations: number;
+  /** Priced candidates with no observation carrying their evidence/ref/basis key. */
+  pricedWithoutObservation: number;
+  /** Observation rows beyond the first for an evidence/ref/basis key. */
+  duplicateObservationKeys: number;
+}
+
 export interface RepositoryBundle {
   evidence: {
     create(input: EvidenceRecordInput): Promise<EvidenceRecord>;

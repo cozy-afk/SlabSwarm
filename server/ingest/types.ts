@@ -42,7 +42,13 @@ export interface IngestCandidate extends Omit<MarketObservationInput, 'amount'> 
   observedAt: string;
   lineage: string[];
   confidence: ConfidenceBand;
-  parseStatus: 'PARSED' | 'FAILED' | 'UNKNOWN_FIELDS';
+  /**
+   * Raw parse status carried from the evidence lane. PENDING is allowed: raw
+   * parsing may still be pending while an explicitly priced candidate is
+   * already eligible for deterministic promotion. It is never rewritten by
+   * promotion (raw parse status and promotion status are different facts).
+   */
+  parseStatus: 'PARSED' | 'PENDING' | 'FAILED' | 'UNKNOWN_FIELDS';
   warnings: string[];
 }
 
