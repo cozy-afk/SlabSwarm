@@ -26,10 +26,12 @@ This script does not enable an eBay feed. It only stores credentials. Marketplac
 
 ## Importing a pasted block
 
-If you do not want to type the fields yourself, copy the whole keys block from eBay — including its labels — into a local text file, then run:
+No file is needed. Copy the whole keys block from eBay, including its labels, and run:
 
 ```bash
-python3 /opt/slabswarm/scripts/import-ebay-keys.py --input ~/ebay-keys-paste.txt
+python3 /opt/slabswarm/scripts/import-ebay-keys.py --paste
 ```
 
-The importer recognizes labels such as `Client ID`, `App ID`, `Cert ID`, `Client secret` and `Refresh token`. It writes the same private `.env` with mode 0600 and reports only field names. It refuses unlabeled blobs and tells you which line numbers need labels; it will not guess which key is which. Delete the paste file yourself when done.
+Paste the block, then press Ctrl-D on a new line. The input is hidden while you type; nothing is echoed and no paste file is created. Over SSH, use `ssh -t` so a TTY is available.
+
+The importer recognizes labels such as `Client ID`, `App ID`, `Cert ID`, `Client secret` and `Refresh token`. It writes the same private `.env` with mode 0600 and reports only field names. It refuses unlabeled blobs and tells you which line numbers need labels; it will not guess which key is which. The older `--input FILE` mode still works if you already have a local file.
