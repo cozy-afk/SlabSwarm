@@ -79,20 +79,23 @@ export async function syncLedgerToPostgres(
       continue;
     }
     try {
-      await repos.evidence.upsert({
-        id: text(row.id) ?? undefined,
-        sourceId,
-        sourceRecordId,
-        sourceUri: text(row.sourceUri) ?? null,
-        capturedAt,
-        observedAt,
-        checksum,
-        mimeType,
-        license: text(row.license) ?? null,
-        rawRef,
-        parsedPayload: payloadOf(row),
-        trustTier: (text(row.trustTier) as 'UNKNOWN' | 'LOW' | 'MEDIUM' | 'HIGH' | undefined) ?? undefined,
-      } as Parameters<Repositories['evidence']['upsert']>[0]);
+      const existing = await repos.evidence.list({ sourceId, sourceRecordId, checksum });
+      if (existing.length === 0) {
+        await repos.evidence.create({
+          id: text(row.id) ?? undefined,
+          sourceId,
+          sourceRecordId,
+          sourceUri: text(row.sourceUri) ?? null,
+          capturedAt,
+          observedAt,
+          checksum,
+          mimeType,
+          license: text(row.license) ?? null,
+          rawRef,
+          parsedPayload: payloadOf(row),
+          trustTier: (text(row.trustTier) as 'UNKNOWN' | 'LOW' | 'MEDIUM' | 'HIGH' | undefined) ?? undefined,
+        } as Parameters<Repositories['evidence']['create']>[0]);
+      }
       report.evidence += 1;
     } catch (error) {
       report.errors.push(`Evidence ${text(row.id) ?? sourceRecordId}: ${errorText(error)}`);
@@ -100,13 +103,19 @@ export async function syncLedgerToPostgres(
     }
 
     const card = cardFromEvidence(row);
-    if (card && !cardKeys.has(String(card.identityKey))) {
-      cardKeys.add(String(card.identityKey));
-      try {
-        await repos.cards.upsert(card as unknown as Parameters<Repositories['cards']['upsert']>[0]);
-        report.cards += 1;
-      } catch (error) {
-        report.errors.push(`Card ${String(card.identityKey)}: ${errorText(error)}`);
+    if (card) {
+      const identityKey = String(card.identityKey);
+      if (!cardKeys.has(identityKey)) {
+        cardKeys.add(identityKey);
+        try {
+          const existing = await repos.cards.list({ identityKey });
+          if (existing.length === 0) {
+            await repos.cards.create(card as unknown as Parameters<Repositories['cards']['create']>[0]);
+          }
+          report.cards += 1;
+        } catch (error) {
+          report.errors.push(`Card ${identityKey}: ${errorText(error)}`);
+        }
       }
     }
   }
@@ -124,18 +133,26 @@ export async function syncLedgerToPostgres(
       continue;
     }
     try {
-      await repos.marketObservations.upsert({
+      const existing = await repos.marketObservations.list({
         evidenceId,
-        targetIdentityRef,
-        basis: basis as Parameters<Repositories['marketObservations']['upsert']>[0]['basis'],
-        amount,
-        currency,
-        marketplace: text(row.marketplace) ?? null,
+        targetIdentityId: targetIdentityRef,
+        basis,
         observedAt,
-        priceComponents: row.priceComponents && typeof row.priceComponents === 'object'
-          ? (row.priceComponents as Record<string, unknown>) : null,
-        status: (text(row.status) as Parameters<Repositories['marketObservations']['upsert']>[0]['status']) ?? undefined,
-      } as Parameters<Repositories['marketObservations']['upsert']>[0]);
+      });
+      if (existing.length === 0) {
+        await repos.marketObservations.create({
+          evidenceId,
+          targetIdentityRef,
+          basis: basis as Parameters<Repositories['marketObservations']['create']>[0]['basis'],
+          amount,
+          currency,
+          marketplace: text(row.marketplace) ?? null,
+          observedAt,
+          priceComponents: row.priceComponents && typeof row.priceComponents === 'object'
+            ? (row.priceComponents as Record<string, unknown>) : null,
+          status: (text(row.status) as Parameters<Repositories['marketObservations']['create']>[0]['status']) ?? undefined,
+        } as Parameters<Repositories['marketObservations']['create']>[0]);
+      }
       report.observations += 1;
     } catch (error) {
       report.errors.push(`Observation ${text(row.id) ?? evidenceId}: ${errorText(error)}`);
