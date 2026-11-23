@@ -165,6 +165,8 @@ export interface CreateAppOptions {
   ) => Promise<ParquetExportResult>;
   /** Override the derived lake root; defaults to SLABSWARM_LAKE_DIR / data/lake. */
   lakeDir?: string;
+  /** Inject the canonical lake source for tests; production uses the durable ledger. */
+  lakeSource?: CanonicalLakeSource;
 }
 
 // Build the Express application with all routes. Exported so API tests can
@@ -196,7 +198,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   // Canonical observations now arrive from two lanes: the ingest ledger and
   // the SQL-backed review queue. Union them by id so an approved web harvest
   // is actually present in the rebuilt lake, not silently invisible there.
-  const lakeSource: CanonicalLakeSource = {
+  const lakeSource: CanonicalLakeSource = options.lakeSource ?? {
     evidence: { list: async () => dataRepositories.evidence.list() },
     marketObservations: {
       list: async () => {

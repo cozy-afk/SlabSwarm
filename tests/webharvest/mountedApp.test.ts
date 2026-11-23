@@ -116,6 +116,10 @@ before(async () => {
     return realExport(source, options);
   };
   app = await createApp({
+    lakeSource: {
+      evidence: { list: async () => repositories.evidence.list() },
+      marketObservations: { list: async () => repositories.marketObservations.list() },
+    },
     webHarvestRepositories: repositories,
     lakeExporter: countingExporter,
     lakeDir,
