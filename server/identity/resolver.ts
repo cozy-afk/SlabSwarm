@@ -152,17 +152,17 @@ function evidenceIdOf(proposal: Proposal): string {
 }
 
 function sourceScopedKey(evidenceId: string): string {
-  return `free-feed\u0000source\u0000${evidenceId}`;
+  return `free-feed\u001fsource\u001f${evidenceId}`;
 }
 
 function identityKeyOf(inputs: IdentityInputs, evidenceId: string, complete: boolean): string {
   const core = [
     'free-feed', inputs.vertical, inputs.property,
     inputs.name, inputs.set, inputs.number, inputs.variant,
-  ].join('\u0000');
+  ].join('\u001f');
   // An incomplete record is never merged: its key is scoped to the one
   // candidate that supplied it. UNKNOWN survives as a value, never as zero.
-  return complete ? core : `${core}\u0000UNKNOWN_COMPONENT\u0000${evidenceId}`;
+  return complete ? core : `${core}\u001fUNKNOWN_COMPONENT\u001f${evidenceId}`;
 }
 
 function canonicalIdOf(identityKey: string): string {

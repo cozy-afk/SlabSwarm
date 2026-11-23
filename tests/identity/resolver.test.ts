@@ -90,6 +90,7 @@ test('two sources naming the same card produce one canonical identity', async ()
   const da = await resolveCandidate(a);
   const db = await resolveCandidate(b);
   assert.equal(da.identityKey, db.identityKey);
+  assert.ok(!da.identityKey.includes('\u0000'), 'identity keys must be Postgres-safe text');
   assert.equal(da.canonicalId, db.canonicalId);
   assert.equal(da.rule, db.rule);
   assert.equal(da.merged, false);
