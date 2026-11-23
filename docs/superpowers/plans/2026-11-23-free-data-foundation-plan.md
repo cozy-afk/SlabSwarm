@@ -302,6 +302,28 @@ Review the PSA End User Agreement before any live calls. Note what may be stored
 
 Expected outcome: either "approved, cert verification may be planned" or "not approved". No production call is made in this task either way.
 
+### Task 10: remove client-controlled provenance from the legacy web-harvest route (follow-up)
+
+**Files:**
+- Modify: `server/webharvest/routes.ts` (or the actual web-harvest route module)
+- Modify: the matching route test
+
+- [ ] **Step 1: Reproduce**
+
+Task 3's scoped reviewer found that `/api/ingest/web-harvest` still accepts a caller-supplied `capturedAt` and passes it into immutable evidence. Confirm the current path before editing.
+
+- [ ] **Step 2: Fix**
+
+Stamp `capturedAt` from a server clock. If tests need determinism, expose an injected clock option; never read the value from the request body.
+
+- [ ] **Step 3: Verify**
+
+Add a functional test that posts a forged old `capturedAt` and asserts the stored evidence carries the server time. Run the route test, typecheck and the full suite. Full suite baseline is 402/402.
+
+- [ ] **Step 4: Commit**
+
+Commit the fix and record the new base in the progress ledger.
+
 ### Task 7: Integration and verification
 
 - [ ] Merge all lanes; run all test files explicitly and `npx tsc --noEmit`.
