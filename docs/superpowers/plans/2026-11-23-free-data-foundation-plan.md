@@ -324,6 +324,54 @@ Add a functional test that posts a forged old `capturedAt` and asserts the store
 
 Commit the fix and record the new base in the progress ledger.
 
+### Task 11: wire free-feed harvest into canonical promotion (follow-up)
+
+**Files:**
+- Modify: the free-feed harvest route in `server/ingest/routes.ts`
+- Modify: `server/ingest/promotion.ts` only if an adapter shim is required
+- Create: an end-to-end test in `tests/ingestion/freeFeedPromotion.test.ts`
+
+**Interfaces:**
+- Consumes: `resolveCandidate`, `promoteToCanonical` from Task 4 and the free-feed adapter output from Task 2.
+- Produces: a harvest that writes candidates to the ledger and promotes provenance-complete candidates into canonical entities, with the canonical write report returned in `{ data, meta }`.
+
+- [ ] **Step 1: Write a failing end-to-end test**
+
+Drive the harvest route with an injected fetch. Assert that a complete candidate produces a canonical card and observation, that a candidate missing provenance stays in the ledger and is reported as rejected, and that a second harvest is idempotent.
+
+- [ ] **Step 2: Implement the wiring**
+
+After `runIngest` succeeds, convert each accepted free-feed record into the shape `promoteToCanonical` requires. Attach server-generated `capturedAt`, `lineage` and `confidence` on the server side; never accept them from the HTTP body. Keep the ledger write and canonical write deterministic. No model call, no simulation, no price invention.
+
+- [ ] **Step 3: Verify**
+
+Run the new test, typecheck, and the full suite. Baseline must be green after Tasks 4 and 5 are merged. No new public listener; the existing admin/operator route stays behind the shared gate.
+
+- [ ] **Step 4: Commit and record**
+
+Commit on `dp-fdf-task11` and record base, head and test counts in the progress ledger.
+
+### Task 12: live bounded harvest and database population check (follow-up)
+
+**Files:**
+- Create: `docs/benchmarks/2026-11-23-free-data-live.md`
+
+- [ ] **Step 1: Choose keyless sources first**
+
+Run bounded harvests against Scryfall and Pokémon TCG API. CardDex may be used only if its key is already stored server-side in the private `.env`; no key value may be pasted in chat or written to docs.
+
+- [ ] **Step 2: Record before and after counts**
+
+Query canonical Postgres counts for cards, evidence, observations, identity decisions and aliases before and after. Record exact counts and any errors. Do not claim success without real output.
+
+- [ ] **Step 3: Regenerate the active report**
+
+Check that `GET /api/intelligence/active-report` cites at least one canonical evidence id and that `meta.lakeManifest` lists exported datasets with row counts and checksums after Task 5.
+
+- [ ] **Step 4: Deploy and verify locally**
+
+Rebuild the Docker image, recreate only the app container, run migrations if needed, and verify the endpoints over `10.99.0.1:3010`. Do not change firewall, DNS or the shared gate.
+
 ### Task 7: Integration and verification
 
 - [ ] Merge all lanes; run all test files explicitly and `npx tsc --noEmit`.
