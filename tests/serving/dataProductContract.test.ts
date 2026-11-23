@@ -45,9 +45,10 @@ before(async () => {
   process.env.SLABGRAPH_DATA_DIR = path.join(root, 'data');
   process.env.SLABGRAPH_TEST_MODE = '1';
   process.env.SLABGRAPH_ADMIN_PASSCODE = PASSCODE;
-  setActiveReportRepositories(createInMemoryRepositories());
+  const repos = createInMemoryRepositories();
+  setActiveReportRepositories(repos);
   ({ createApp } = await import(`../../server.ts?contract=${Date.now()}`));
-  const app: Express = await createApp();
+  const app: Express = await createApp({ canonicalRepositories: repos } as never);
   const bound = await new Promise<Server>((resolve, reject) => {
     const instance = app.listen(0, '127.0.0.1');
     instance.once('listening', () => resolve(instance));

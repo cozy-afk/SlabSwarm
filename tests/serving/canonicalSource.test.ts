@@ -17,6 +17,7 @@ import { setActiveReportRepositories } from '../../server/intelligence/active-re
 const PASSCODE = 'canonical-source-passcode';
 const NOW = '2026-11-23T00:00:00.000Z';
 const TARGET = 'CANONICAL-SOURCE-TEST-1';
+const DB_TARGET = 'CANONICAL-DB-SHAPE-1';
 const originalDataDir = process.env.SLABGRAPH_DATA_DIR;
 const originalTestMode = process.env.SLABGRAPH_TEST_MODE;
 const originalPasscode = process.env.SLABGRAPH_ADMIN_PASSCODE;
@@ -63,7 +64,18 @@ before(async () => {
     currency: 'USD',
     observedAt: NOW,
     status: 'NORMALIZED',
-  });
+  } as never);
+  for (const amount of [110, 120]) {
+    await repos.marketObservations.create({
+      evidenceId: evidence.id,
+      targetIdentityId: DB_TARGET,
+      basis: 'GUIDE',
+      amount,
+      currency: 'USD',
+      observedAt: NOW,
+      status: 'NORMALIZED',
+    } as never);
+  }
 
   const app: Express = await createApp({ canonicalRepositories: repos } as never);
   const bound = await new Promise<Server>((resolve, reject) => {
@@ -114,7 +126,7 @@ test('research run accepts the UI payload and uses canonical evidence', async ()
   assert.ok(status === 200 || status === 201, `research run status ${status}: ${JSON.stringify(body)}`);
   assert.ok(body.data && typeof body.data.id === 'string', 'research run must return an envelope with an id');
   assert.ok(body.meta && typeof body.meta.requestId === 'string', 'research run must use the response envelope');
-  assert.equal(body.data.targetId, TARGET);
+  assert.equal(body.data.targetId, DB_TARGET);
 
   const detail = await fetch(`${baseUrl}/api/swarm/runs/${body.data.id}`, { headers: authHeaders });
   const detailBody = await detail.json();

@@ -2,6 +2,10 @@
 
 Status: binding. Owner confirmed 2026-11-23.
 
+## Active execution goal (owner instruction, 2026-11-23)
+
+Keep the product working end to end, not merely buildable. In each operating cycle: harvest and log cards from allowlisted free sources; promote them to canonical identities; price them from SOLD / GUIDE / ASKING evidence without relabelling; run an evidence-first research cycle; record the run; and verify the result through the live API and Postgres. If any step fails, debug it methodically, add a failing test first, fix the cause, run the full suite, deploy, and re-run the cycle. A cycle is complete only when real card rows, real evidence rows, real price observations, a stored research run with cited evidence IDs and an evidence-backed active report are all readable from the canonical store. Never invent a card, a price, a sale or a research claim to make the pipeline look healthy. Gated sources remain gaps and are reported as such.
+
 ## Purpose
 
 Build Slabswarm into our own first-party trading-card intelligence service. It will catalog trading cards, sports cards and comic books, attach historical prices, completed sales and active listings to the right identities, and use that joined evidence to produce price guidance and forecasts. The database and the methods are ours. External APIs are raw inputs, not the product.
