@@ -42,7 +42,7 @@ function packet() {
   return buildEvidencePacket({ items: ITEMS });
 }
 
-test('tool registry exposes exactly the twelve phase-4 tool names', () => {
+test('tool registry exposes every registered tool name', () => {
   assert.deepEqual([...REGISTERED_TOOLS], [
     'query_graph',
     'get_market_observations',
@@ -50,6 +50,8 @@ test('tool registry exposes exactly the twelve phase-4 tool names', () => {
     'get_event_history',
     'get_factor_scores',
     'search_sources',
+    'search_web_sources',
+    'harvest_web_source',
     'run_deterministic_baseline',
     'run_simulation',
     'backtest_forecast',

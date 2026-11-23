@@ -217,5 +217,5 @@ test('benchmark: router exposes every Phase 4 endpoint without registering a lis
   ]) {
     assert.ok(routes.includes(expected), `missing endpoint: ${expected}`);
   }
-  assert.equal(REGISTERED_TOOLS.length, 12);
+  assert.equal(REGISTERED_TOOLS.length, 14);
 });
