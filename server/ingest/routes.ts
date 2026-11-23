@@ -13,6 +13,13 @@ import {
   type LegacySnapshot,
 } from './adapters/legacy.ts';
 import { createTcgapisAdapter } from './adapters/tcgapis.ts';
+import {
+  createWebSourceAdapter,
+  harvestWebSources,
+  type WebFetchImpl,
+} from './adapters/web.ts';
+import { WebSourceConfigError, WebSourceRegistry } from './sources.ts';
+import type { WebSourceConfig } from '../contracts/webHarvest.ts';
 import { promoteCandidates } from './promotion.ts';
 import { runIngest } from './runner.ts';
 import { createDurableRepositories } from './store.ts';
@@ -75,18 +82,32 @@ function notFound(res: Response, label: string): void {
   respondError(res, 404, `${label} not found`, 'not_found');
 }
 
+export interface IngestRouterOptions {
+  /** Web harvesting is opt-in: no sources are configured by default. */
+  web?: {
+    sources?: WebSourceConfig[];
+    fetchImpl?: WebFetchImpl;
+    now?: () => number;
+  };
+}
+
 export function createIngestRouter(
   // Default to the durable ledger so server restarts keep all ingested
   // evidence. Tests may still inject an isolated repository bundle.
   repos: IngestRepositories = createDurableRepositories(),
+  options: IngestRouterOptions = {},
 ): Router {
   const router = Router();
+  const webRegistry = new WebSourceRegistry({ sources: options.web?.sources ?? [] });
+  const webFetch: WebFetchImpl =
+    options.web?.fetchImpl ?? (globalThis.fetch as unknown as WebFetchImpl);
   const registry = new AdapterRegistry([
     // No path captured here: the adapter resolves SLABGRAPH_DATA_DIR on each fetch.
     createLegacyAdapter({}),
     createCsvAdapter(),
     createManualAdapter(),
     createTcgapisAdapter(),
+    createWebSourceAdapter({ registry: webRegistry, fetchImpl: webFetch, now: options.web?.now }),
   ]);
 
   // Evidence ---------------------------------------------------------------
@@ -193,6 +214,75 @@ export function createIngestRouter(
       options: {},
     });
     const payload = { evidence: result.evidence, candidates: result.candidates, run: result.run };
+    respond(res, 200, payload, payload);
+  });
+
+  // Operator-controlled first-party web sources ----------------------------
+  router.get('/api/ingest/web-sources', (_req, res) => {
+    const sources = webRegistry.list();
+    respond(res, 200, { sources }, { sources });
+  });
+
+  router.post('/api/ingest/web-sources', (req, res) => {
+    const body = req.body;
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      respondError(res, 400, 'source config object is required', 'validation_error');
+      return;
+    }
+    const action = typeof body.action === 'string' ? body.action : 'upsert';
+    if (action === 'enable' || action === 'disable' || action === 'remove') {
+      const id = typeof body.id === 'string' ? body.id : '';
+      const before = webRegistry.get(id);
+      if (!before) {
+        notFound(res, 'web source');
+        return;
+      }
+      if (action === 'remove') webRegistry.remove(id);
+      else webRegistry.setEnabled(id, action === 'enable');
+      const sources = webRegistry.list();
+      const updated = webRegistry.get(id) ?? null;
+      respond(res, 200, { source: updated, sources }, { source: updated, sources });
+      return;
+    }
+    const candidate = body.source !== undefined ? body.source : body;
+    try {
+      const source = webRegistry.upsert(candidate as WebSourceConfig);
+      const sources = webRegistry.list();
+      respond(res, 200, { source, sources }, { source, sources });
+    } catch (error) {
+      respondError(
+        res,
+        400,
+        error instanceof WebSourceConfigError ? error.message : 'invalid web source config',
+        'validation_error',
+      );
+    }
+  });
+
+  router.post('/api/ingest/web-harvest', async (req, res) => {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+      ? req.body as Record<string, unknown>
+      : {};
+    const requested = Array.isArray(body.sourceIds)
+      ? body.sourceIds.filter((value): value is string => typeof value === 'string')
+      : null;
+    const sources = requested === null
+      ? webRegistry.enabled()
+      : webRegistry.enabled().filter((source) => requested.includes(source.id));
+    const capturedAt = typeof body.capturedAt === 'string' && Number.isFinite(Date.parse(body.capturedAt))
+      ? body.capturedAt
+      : undefined;
+    const results = await harvestWebSources({
+      repos,
+      registry: webRegistry,
+      fetchImpl: webFetch,
+      sources,
+      capturedAt,
+      now: options.web?.now,
+    });
+    const harvested = new Set(results.map((result) => `web:${result.sourceId}`));
+    const evidence = (await repos.evidence.list({})).filter((row) => harvested.has(row.sourceId));
+    const payload = { results, evidence };
     respond(res, 200, payload, payload);
   });
 
