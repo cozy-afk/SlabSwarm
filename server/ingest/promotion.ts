@@ -8,11 +8,19 @@ import type {
   MarketObservationInput,
   RepositoryBundle,
 } from '../contracts/dataProduct.ts';
+import type { FreeFeedRecord } from '../contracts/freeFeed.ts';
+import type { Repositories } from '../db/repositories/index.ts';
+import {
+  promoteToCanonical,
+  resolveCandidate,
+} from '../identity/resolver.ts';
 import { sanitizeError } from './runner.ts';
 import type {
   CandidateRepository,
   ConfidenceBand,
   IngestCandidate,
+  IngestRun,
+  StoredEvidenceRecord,
 } from './types.ts';
 
 /**
@@ -234,3 +242,159 @@ export async function promoteCandidates(
 }
 
 export default promoteCandidates;
+
+// --- Free-feed harvest -> canonical promotion shim ------------------------
+// The adapter's FreeFeedRecord deliberately has no capturedAt, lineage or
+// confidence. Those are rebuilt here from server-owned state only: the run's
+// server clock, the ledger's immutable evidence id and the adapter's own
+// declared confidence. Nothing here reads an HTTP body, calls a model or
+// invents a price; every canonical value is copied from the harvested record.
+
+const VALID_CONFIDENCE: ReadonlySet<string> = new Set(['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH']);
+
+/** Confidence is a server-side fact: take the adapter's declared value (or
+ * the ledger trust tier) and never anything supplied by a caller. */
+function confidenceOf(evidence: StoredEvidenceRecord): ConfidenceBand {
+  const payload = evidence.parsedPayload ?? {};
+  for (const value of [payload.confidence, evidence.trustTier]) {
+    if (typeof value === 'string' && VALID_CONFIDENCE.has(value)) return value as ConfidenceBand;
+  }
+  return 'UNKNOWN';
+}
+
+/** Evidence ids already in the ledger before this harvest. A duplicate
+ * harvest returns the pre-existing record, so comparing ids (not timestamps,
+ * which may be injected identically across runs) is the reliable way to
+ * promote each ledger row exactly once. */
+function isNewEvidence(evidence: StoredEvidenceRecord, known: ReadonlySet<string>): boolean {
+  return !known.has(evidence.id);
+}
+
+function freeFeedRecordOf(evidence: StoredEvidenceRecord): FreeFeedRecord | null {
+  const record = evidence.parsedPayload?.record;
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) return null;
+  return record as FreeFeedRecord;
+}
+
+export interface FreeFeedHarvestPromotionInput {
+  /** Configured feed id; used only to select this harvest's ledger rows. */
+  sourceId: string;
+  run: IngestRun;
+  evidence: StoredEvidenceRecord[];
+  /** Server-generated capture timestamp from the harvest's own clock. */
+  capturedAt: string;
+  /** Ids present in the ledger before the harvest; used to skip duplicates. */
+  knownEvidenceIds: ReadonlySet<string>;
+  /** First-party canonical repositories, injected by the caller. */
+  repositories: Repositories;
+}
+
+export interface FreeFeedProposalReport {
+  /** Canonical source-scoped id (`sourceId:externalId`). */
+  evidenceId: string;
+  ledgerEvidenceId: string;
+  accepted: boolean;
+  basis: MarketBasis;
+  amount: number | 'UNKNOWN';
+  rule: string | null;
+  cardId: string | null;
+  observationId: string | null;
+  reasons: string[];
+  errors: string[];
+}
+
+export interface FreeFeedPromotionReport {
+  /** True only when every attempted canonical write fully committed. */
+  accepted: boolean;
+  attempted: number;
+  promoted: number;
+  rejected: number;
+  reasons: string[];
+  errors: string[];
+  results: FreeFeedProposalReport[];
+}
+
+/** Convert a successful free-feed harvest's newly created records into
+ * provenance-complete canonical proposals and commit each one atomically.
+ * `accepted` is false if any proposal was rejected or any write failed, so a
+ * partial commit can never be surfaced as a successful harvest. */
+export async function promoteFreeFeedHarvest(
+  input: FreeFeedHarvestPromotionInput,
+): Promise<FreeFeedPromotionReport> {
+  const report: FreeFeedPromotionReport = {
+    accepted: true,
+    attempted: 0,
+    promoted: 0,
+    rejected: 0,
+    reasons: [],
+    errors: [],
+    results: [],
+  };
+  const fresh = input.evidence.filter(
+    (evidence) => evidence.sourceId === input.sourceId
+      && isNewEvidence(evidence, input.knownEvidenceIds),
+  );
+
+  for (const evidence of fresh) {
+    report.attempted += 1;
+    const record = freeFeedRecordOf(evidence);
+    if (!record) {
+      report.rejected += 1;
+      report.reasons.push(`ledger evidence ${evidence.id} has no free-feed record to promote`);
+      continue;
+    }
+    const proposal = {
+      ...record,
+      capturedAt: input.capturedAt,
+      lineage: [
+        `source:${input.sourceId}`,
+        `run:${input.run.id}`,
+        `evidence:${evidence.id}`,
+      ],
+      confidence: confidenceOf(evidence),
+      now: () => new Date(input.capturedAt),
+      repositories: input.repositories,
+    } as FreeFeedRecord;
+    try {
+      // Read-only decision for the audit report; the committing path resolves
+      // again inside its own transaction against the same repository.
+      const decision = await resolveCandidate(proposal);
+      const canonical = await promoteToCanonical(proposal);
+      report.results.push({
+        evidenceId: `${record.sourceId}:${record.externalId}`,
+        ledgerEvidenceId: evidence.id,
+        accepted: canonical.accepted,
+        basis: record.basis,
+        amount: record.amount,
+        rule: decision.rule,
+        cardId: canonical.card?.id ?? null,
+        observationId: canonical.observation?.id ?? null,
+        reasons: [...canonical.reasons],
+        errors: [...canonical.errors],
+      });
+      report.reasons.push(...canonical.reasons);
+      report.errors.push(...canonical.errors);
+      if (canonical.accepted) report.promoted += 1;
+      else report.rejected += 1;
+    } catch (error) {
+      const message = sanitizeError(error);
+      report.rejected += 1;
+      report.errors.push(message);
+      report.reasons.push(`promotion failed for ledger evidence ${evidence.id}`);
+      report.results.push({
+        evidenceId: `${record.sourceId}:${record.externalId}`,
+        ledgerEvidenceId: evidence.id,
+        accepted: false,
+        basis: record.basis,
+        amount: record.amount,
+        rule: null,
+        cardId: null,
+        observationId: null,
+        reasons: [`promotion failed for ledger evidence ${evidence.id}`],
+        errors: [message],
+      });
+    }
+  }
+  report.accepted = report.rejected === 0 && report.errors.length === 0;
+  return report;
+}
