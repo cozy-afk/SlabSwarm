@@ -27,7 +27,11 @@ import {
 } from './adapters/web.ts';
 import { WebSourceConfigError, WebSourceRegistry } from './sources.ts';
 import type { WebSourceConfig } from '../contracts/webHarvest.ts';
-import { promoteCandidates } from './promotion.ts';
+import {
+  createDefaultRepositories,
+  type Repositories,
+} from '../db/repositories/index.ts';
+import { promoteCandidates, promoteFreeFeedHarvest } from './promotion.ts';
 import { runIngest } from './runner.ts';
 import { createDurableRepositories } from './store.ts';
 import type { IngestRepositories } from './types.ts';
@@ -96,14 +100,17 @@ function respond<T>(
   data: T,
   legacy: Record<string, unknown> = {},
   extraWarnings: string[] = [],
+  extraMeta: Record<string, unknown> = {},
 ): void {
+  const payload = envelope(data, newContext(), {
+    basis: UNKNOWN,
+    currency: UNKNOWN,
+    warnings: [...INGEST_WARNINGS, ...extraWarnings],
+  });
   res.status(status).json({
     ...legacy,
-    ...envelope(data, newContext(), {
-      basis: UNKNOWN,
-      currency: UNKNOWN,
-      warnings: [...INGEST_WARNINGS, ...extraWarnings],
-    }),
+    ...payload,
+    ...(Object.keys(extraMeta).length > 0 ? { meta: { ...payload.meta, ...extraMeta } } : {}),
   });
 }
 
@@ -158,6 +165,10 @@ export interface IngestRouterOptions {
     /** Deterministic clock for capture timestamps. Tests inject this; the
      * HTTP request body is never allowed to choose capturedAt. */
     now?: () => Date;
+    /** First-party canonical repositories for the atomic promotion write.
+     * Tests inject an in-memory bundle; production uses the default bundle.
+     * This is server-side plumbing and is never read from the request. */
+    repositories?: Repositories;
   };
 }
 
@@ -238,6 +249,11 @@ export function createIngestRouter(
     // capturedAt is server-generated from the injected clock (production: the
     // real clock). The HTTP body is deliberately never read for provenance.
     const capturedAt = (options.freeFeeds?.now?.() ?? new Date()).toISOString();
+    // Snapshot ledger ids before the run so promotion can distinguish newly
+    // created evidence from duplicates returned by a repeated harvest.
+    const knownEvidenceIds = new Set(
+      (await repos.evidence.list({ sourceId: config.sourceId })).map((row) => row.id),
+    );
     // Failures are captured in the run record, not thrown at the caller: the
     // view can surface the counts and the plain-text errors deterministically.
     const result = await runIngest(freeFeedAdapters.get(config.sourceId)!, repos, {
@@ -248,6 +264,26 @@ export function createIngestRouter(
     });
     const { counts } = result.run;
     const meta = result.run.meta ?? {};
+    // Canonical promotion is a separate, atomic write. Its truthful report is
+    // returned in { data, meta }; a rejected proposal never becomes a
+    // "successful harvest" just because the ledger write succeeded.
+    const promotion = await promoteFreeFeedHarvest({
+      sourceId: config.sourceId,
+      run: result.run,
+      evidence: result.evidence,
+      capturedAt,
+      knownEvidenceIds,
+      repositories: options.freeFeeds?.repositories ?? createDefaultRepositories(),
+    });
+    const canonical = {
+      accepted: promotion.accepted,
+      attempted: promotion.attempted,
+      promoted: promotion.promoted,
+      rejected: promotion.rejected,
+      reasons: promotion.reasons,
+      errors: promotion.errors,
+      results: promotion.results,
+    };
     const data = {
       sourceId: config.sourceId,
       license: config.license,
@@ -269,8 +305,9 @@ export function createIngestRouter(
         dailyCapReached: meta.dailyCapReached === true,
         skipped: typeof meta.skipped === 'string' ? meta.skipped : null,
       },
+      canonical,
     };
-    respond(res, 200, data, data, FREE_FEED_WARNINGS);
+    respond(res, 200, data, data, FREE_FEED_WARNINGS, { canonicalPromotion: canonical });
   });
 
   // Manual notes -----------------------------------------------------------
