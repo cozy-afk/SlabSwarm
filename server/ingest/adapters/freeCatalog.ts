@@ -42,7 +42,7 @@ const DEFAULT_PATHS: Record<string, string[]> = {
   // Scryfall requires an accurate User-Agent (sent below). Its terms forbid
   // paywalling Scryfall data, so this feed stays out of the commercial product.
   scryfall: ['/cards/random'],
-  pokemontcg: ['/v2/cards?q=name:Pikachu&pageSize=20'],
+  pokemontcg: ['/v2/cards?q=name:Pikachu'],
   carddex: ['/v1/cards?name=Pikachu&pageSize=20'],
   cardex: ['/cards'],
 };
