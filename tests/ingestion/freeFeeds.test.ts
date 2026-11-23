@@ -259,6 +259,36 @@ test('Cardex keyless adapter enforces the 100-request daily cap and per-request 
   assert.ok(waits.every((ms) => ms === config.rateLimitMs));
 });
 
+test('Cardex 100/day cap persists across two fetch calls on one adapter instance', async () => {
+  const { FREE_FEEDS } = await import('../../server/ingest/freeFeeds.ts');
+  const { createFreeFeedAdapter, CARDEX_DAILY_REQUEST_LIMIT } = await import(
+    '../../server/ingest/adapters/freeCatalog.ts'
+  );
+  const config = configFor('cardex', FREE_FEEDS);
+  let calls = 0;
+  const fetchImpl: () => Promise<FakeResponse> = async () => {
+    calls += 1;
+    return respond({ data: [] });
+  };
+  const adapter = createFreeFeedAdapter(config);
+  const firstPaths = Array.from({ length: 60 }, (_, index) => `/cards/${index + 1}`);
+  const secondPaths = Array.from({ length: 60 }, (_, index) => `/cards/${index + 61}`);
+
+  const first = await adapter.fetch(fetchContext({ paths: firstPaths, fetchImpl }));
+  const second = await adapter.fetch(fetchContext({ paths: secondPaths, fetchImpl }));
+
+  assert.equal(first.meta?.requestsIssued, 60);
+  assert.equal(first.meta?.dailyRequestsIssued, 60);
+  assert.equal(second.meta?.requestsIssued, 40, 'the second call only gets the remaining allowance');
+  assert.equal(second.meta?.dailyRequestsIssued, CARDEX_DAILY_REQUEST_LIMIT);
+  assert.equal(second.meta?.dailyCapReached, true);
+  assert.equal(calls, 100, 'two calls in one day must never exceed the 100/day cap');
+
+  const third = await adapter.fetch(fetchContext({ paths: ['/cards/extra'], fetchImpl }));
+  assert.equal(third.meta?.requestsIssued, 0, 'the counter is not reset by another call');
+  assert.equal(calls, 100);
+});
+
 test('a 429 stops the run with a sanitized error containing no key, URL credential or body', async () => {
   const { createFreeFeedAdapter } = await import(
     '../../server/ingest/adapters/freeCatalog.ts'

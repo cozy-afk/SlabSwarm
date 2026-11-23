@@ -279,6 +279,9 @@ function readEnv(env: Record<string, unknown>, name: string): string | null {
 }
 
 export function createFreeFeedAdapter(config: FreeFeedConfig): IngestAdapter {
+  // Cardex's published 100/day allowance belongs to the adapter instance, not
+  // to a single fetch(): repeated runs in the same day share the counter.
+  let dailyRequestsIssued = 0;
   return {
     id: config.sourceId,
     sourceId: config.sourceId,
@@ -305,13 +308,14 @@ export function createFreeFeedAdapter(config: FreeFeedConfig): IngestAdapter {
 
       const items: RawItem[] = [];
       const waits: number[] = [];
-      let requestsIssued = 0;
+      const requestsBefore = dailyRequestsIssued;
       let dailyCapReached = false;
 
       for (let index = 0; index < paths.length; index += 1) {
-        // Cardex: the published 100/day cap is a hard counter, independent of
-        // the per-request delay. Request 101 is never issued.
-        if (config.sourceId === 'cardex' && requestsIssued >= CARDEX_DAILY_REQUEST_LIMIT) {
+        // Cardex: the published 100/day cap is a hard counter held in the
+        // adapter closure, independent of the per-request delay. Request 101
+        // is never issued, even across separate fetch() calls.
+        if (config.sourceId === 'cardex' && dailyRequestsIssued >= CARDEX_DAILY_REQUEST_LIMIT) {
           dailyCapReached = true;
           break;
         }
@@ -326,7 +330,7 @@ export function createFreeFeedAdapter(config: FreeFeedConfig): IngestAdapter {
         if (key !== null && config.apiKeyEnv) headers['x-api-key'] = key;
 
         const response = await fetchImpl(url, { headers });
-        requestsIssued += 1;
+        dailyRequestsIssued += 1;
         if (response.status === 429) {
           // Stop immediately; never read or echo the response body.
           throw new Error(`Free feed ${config.sourceId}: HTTP 429 rate limited; run stopped`);
@@ -351,7 +355,13 @@ export function createFreeFeedAdapter(config: FreeFeedConfig): IngestAdapter {
 
       return {
         items,
-        meta: { requestsIssued, dailyCapReached, waits, keyConfigured: key !== null },
+        meta: {
+          requestsIssued: dailyRequestsIssued - requestsBefore,
+          dailyRequestsIssued,
+          dailyCapReached,
+          waits,
+          keyConfigured: key !== null,
+        },
       };
     },
   };
