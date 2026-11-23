@@ -212,21 +212,33 @@ export function createWebHarvestRouter(options: WebHarvestRouteOptions = {}): Ro
       respondError(res, 404, context, 'Candidate not found.', 'not_found');
       return;
     }
+    // The approval above is already committed. The derived lake is
+    // rebuildable, so an export failure never rolls the canonical write back;
+    // it is surfaced in this operator-only response instead of being swallowed.
+    let exportMeta: Record<string, unknown> = {};
     if (action === 'APPROVE' && options.onApproved) {
       try {
-        await options.onApproved(result);
-      } catch {
-        // Approval is already committed. The lake is rebuildable; a failed
-        // export is reported as UNKNOWN by the next report, never fabricated.
+        exportMeta = { lakeExport: await options.onApproved(result) };
+      } catch (error) {
+        exportMeta = {
+          lakeExport: {
+            ok: false,
+            error: error instanceof Error ? error.message : 'Lake export failed.',
+          },
+        };
       }
     }
-    res.status(200).json(envelope(result, context, {
+    // makeMeta() intentionally whitelists its fields, so the export signal is
+    // merged into the envelope after construction rather than widening the
+    // shared cross-lane meta contract for every endpoint.
+    const payload = envelope(result, context, {
       source: result.provenance.source,
       basis: result.provenance.basis,
       currency: result.provenance.currency,
       provenance: result.provenance,
       warnings: WARNINGS,
-    }));
+    });
+    res.status(200).json({ ...payload, meta: { ...payload.meta, ...exportMeta } });
   }));
 
   return router;

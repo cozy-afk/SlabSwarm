@@ -9,13 +9,28 @@ import {
 } from './server/alertDispatcher.ts';
 import { createAnalyticsRouter } from './server/analytics/routes.ts';
 import { createAnalyticsStore } from './server/analytics/store.ts';
+import {
+  exportCanonicalLake,
+  type CanonicalLakeOptions,
+  type CanonicalLakeSource,
+  type ParquetExportResult,
+} from './server/analytics/parquet.ts';
 import { createOperatorAuthManager } from './server/auth.ts';
 import { mountDbRoutes } from './server/db/routes.ts';
+import { createDefaultRepositories } from './server/db/repositories/index.ts';
 import { createIngestRouter } from './server/ingest/routes.ts';
 import { createDurableRepositories } from './server/ingest/store.ts';
 import { setActiveReportRepositories } from './server/intelligence/active-report.ts';
 import { mountIntelligenceRoutes } from './server/intelligence/routes.ts';
 import { mountServingRoutes } from './server/serving/routes.ts';
+import { envelope, newContext, UNKNOWN } from './server/serving/catalog.ts';
+import { mountWebHarvestRouter } from './server/webharvest/routes.ts';
+import { createWebHarvestStore } from './server/webharvest/store.ts';
+import type {
+  ReviewResult,
+  WebHarvestRepositories,
+  WebHarvestStore,
+} from './server/webharvest/store.ts';
 import { graphEngine } from './server/graphEngine.ts';
 import {
   groundGraphRagAnswer,
@@ -129,11 +144,34 @@ const operatorAuth = createOperatorAuthManager(
   (hash) => graphEngine.setAdminPasscodeHash(hash)
 );
 
+/** Operator-visible record of the last lake rebuild after an approval. */
+interface HarvestExportRecord {
+  ok: boolean;
+  at: string;
+  candidateId: string;
+  manifest?: ParquetExportResult;
+  error?: string;
+}
+
+export interface CreateAppOptions {
+  /** Inject isolated canonical db ports for the review queue (tests only). */
+  webHarvestRepositories?: WebHarvestRepositories;
+  /** Inject a whole review store, bypassing the default construction. */
+  webHarvestStore?: WebHarvestStore;
+  /** Inject the lake exporter; production uses Task 5's exportCanonicalLake. */
+  lakeExporter?: (
+    source: CanonicalLakeSource,
+    options?: CanonicalLakeOptions,
+  ) => Promise<ParquetExportResult>;
+  /** Override the derived lake root; defaults to SLABSWARM_LAKE_DIR / data/lake. */
+  lakeDir?: string;
+}
+
 // Build the Express application with all routes. Exported so API tests can
 // drive real handlers over an ephemeral port without auto-starting a listener.
 // When SLABGRAPH_TEST_MODE is set, Vite dev middleware and static hosting are
 // skipped (the API is all tests need) so no long-lived watcher keeps Node alive.
-export async function createApp() {
+export async function createApp(options: CreateAppOptions = {}) {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
 
@@ -151,13 +189,73 @@ export async function createApp() {
     evidence: evidenceSeed,
     observations: observationSeed,
   });
+  const harvestRepositories = options.webHarvestRepositories ?? createDefaultRepositories();
+  const harvestStore = options.webHarvestStore ??
+    createWebHarvestStore({ repositories: harvestRepositories });
+
+  // Canonical observations now arrive from two lanes: the ingest ledger and
+  // the SQL-backed review queue. Union them by id so an approved web harvest
+  // is actually present in the rebuilt lake, not silently invisible there.
+  const lakeSource: CanonicalLakeSource = {
+    evidence: { list: async () => dataRepositories.evidence.list() },
+    marketObservations: {
+      list: async () => {
+        const [ingested, reviewed] = await Promise.all([
+          dataRepositories.marketObservations.list(),
+          harvestRepositories.marketObservations.list(),
+        ]);
+        const byId = new Map<string, (typeof ingested)[number]>();
+        for (const row of [...ingested, ...reviewed]) byId.set(row.id, row);
+        return [...byId.values()];
+      },
+    },
+  };
+
+  // Last export outcome is kept in-process for the operator status endpoint.
+  // A failure never rolls back the already committed approval: it is recorded,
+  // logged, and returned in the review response's meta.lakeExport.
+  const lastHarvestExport: { record: HarvestExportRecord | null } = { record: null };
+  const exporter = options.lakeExporter ?? exportCanonicalLake;
+  const rebuildLake = async (result: ReviewResult) => {
+    const at = new Date().toISOString();
+    const candidateId = result.candidate.id;
+    try {
+      const manifest = await exporter(lakeSource, {
+        ...(options.lakeDir ? { lakeDir: options.lakeDir } : {}),
+        store: analyticsStore,
+      });
+      lastHarvestExport.record = { ok: true, at, candidateId, manifest };
+      return { ok: true as const, ...manifest };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Lake export failed.';
+      lastHarvestExport.record = { ok: false, at, candidateId, error: message };
+      console.error(`[web-harvest] lake export failed after approving ${candidateId}: ${message}`);
+      throw error;
+    }
+  };
+
   mountDbRoutes(app, { requireAuth: operatorAuth.requireAuth });
   app.use(createIngestRouter(dataRepositories));
   // The derived lake is rebuildable, but its export trigger stays behind the
   // existing operator gate. No new listener or public route is introduced.
   app.use('/api/admin/export-parquet', operatorAuth.requireAuth);
-  app.use(createAnalyticsRouter({ store: analyticsStore, canonical: dataRepositories }));
+  app.use(createAnalyticsRouter({ store: analyticsStore, canonical: lakeSource }));
   mountIntelligenceRoutes(app, operatorAuth.requireAuth);
+
+  // Task 19: the operator review surface uses the same shared gate as every
+  // other admin route. No new listener, firewall, DNS or gate behaviour change.
+  app.use('/api/web-harvest', operatorAuth.requireAuth);
+  mountWebHarvestRouter(app, { store: harvestStore, onApproved: rebuildLake });
+  app.get('/api/admin/web-harvest/lake-export', operatorAuth.requireAuth, (_req, res) => {
+    res.json(envelope({ last: lastHarvestExport.record }, newContext(() => new Date()), {
+      basis: UNKNOWN as MarketBasis,
+      currency: UNKNOWN,
+      warnings: [
+        'Lake exports are rebuildable derived artifacts; a failed export never rolls back a canonical approval.',
+        'An UNKNOWN or absent manifest is reported as a gap, never as invented data.',
+      ],
+    }));
+  });
 
   // --- Self-Hosted Health Check Endpoint (Docker / systemd / Reverse Proxy) ---
   app.get('/api/health', (_req, res) => {
