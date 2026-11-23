@@ -341,6 +341,38 @@ test('alerts trigger only on known SOLD_DERIVED values and name basis and source
   assert.equal(states[1].status, 'NOT_TRIGGERED');
 });
 
+test('two rules on one target use their own grade snapshot without cross-talk', () => {
+  const psa9 = rule({ id: 'rule-9', grade: 'PSA 9', metric: 'FMV_BELOW', threshold: 120 });
+  const psa10 = rule({ id: 'rule-10', grade: 'PSA 10', metric: 'FMV_BELOW', threshold: 120 });
+  const { states } = evaluateAlerts([psa9, psa10], [
+    snapshot({ grade: 'PSA 9', value: 90, source: 'psa9_sold' }),
+    snapshot({ grade: 'PSA 10', value: 200, source: 'psa10_sold' }),
+  ], { now: NOW });
+
+  const ninth = states.find((state) => state.ruleId === 'rule-9');
+  const tenth = states.find((state) => state.ruleId === 'rule-10');
+  assert.equal(ninth?.value, 90, 'the PSA 9 rule sees the PSA 9 mark');
+  assert.equal(ninth?.status, 'TRIGGERED');
+  assert.equal(ninth?.grade, 'PSA 9');
+  assert.equal(ninth?.source, 'psa9_sold');
+  assert.equal(tenth?.value, 200, 'the PSA 10 rule sees the PSA 10 mark');
+  assert.equal(tenth?.status, 'NOT_TRIGGERED');
+  assert.equal(tenth?.grade, 'PSA 10');
+  assert.equal(tenth?.source, 'psa10_sold');
+  assert.match(tenth?.detail ?? '', /PSA 10/);
+});
+
+test('a rule with no snapshot for its own grade stays UNKNOWN even when another grade exists', () => {
+  const { states } = evaluateAlerts(
+    [rule({ grade: 'PSA 10' })],
+    [snapshot({ grade: 'PSA 9', value: 90 })],
+    { now: NOW },
+  );
+  assert.equal(states[0].status, 'UNKNOWN');
+  assert.equal(states[0].grade, 'PSA 10');
+  assert.match(states[0].detail, /PSA 10/);
+});
+
 test('an UNKNOWN FMV produces an UNKNOWN alert state and never a trigger', () => {
   const { states } = evaluateAlerts([rule()], [snapshot({ value: UNKNOWN })], { now: NOW });
 

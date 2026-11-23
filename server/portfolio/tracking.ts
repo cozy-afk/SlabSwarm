@@ -158,6 +158,8 @@ export interface AlertState {
   id: string;
   ruleId: string;
   targetId: string;
+  /** The grade scope actually evaluated, from the rule. UNKNOWN when ungraded. */
+  grade: string | UnknownValue;
   metric: AlertMetric;
   threshold: number;
   status: 'TRIGGERED' | 'NOT_TRIGGERED' | 'UNKNOWN';
@@ -612,6 +614,8 @@ export function estimateTax(input: TaxEstimateInput): EstimateArtifact {
 
 export interface MetricSnapshot {
   targetId: string;
+  /** Grade this snapshot prices; must match the rule's grade to be eligible. */
+  grade?: string | UnknownValue;
   basis: string;
   source: string | UnknownValue;
   value: NumberOrUnknown;
@@ -626,6 +630,15 @@ export interface AlertEvaluation {
   warnings: string[];
 }
 
+/** A snapshot belongs to one target *and* one grade scope. */
+function gradeOf(value: string | UnknownValue | null | undefined): string | UnknownValue {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : UNKNOWN;
+}
+
+function alertScope(targetId: string, grade: string | UnknownValue | null | undefined): string {
+  return `${targetId}::${gradeOf(grade)}`;
+}
+
 /** Evaluate stored rules against injected, explicitly based metric snapshots. */
 export function evaluateAlerts(
   rules: readonly AlertRuleRecord[],
@@ -636,18 +649,22 @@ export function evaluateAlerts(
     'Alerts are stored rules plus in-app state only; no external notification provider is involved.',
   ];
   const states: AlertState[] = [];
-  const byTarget = new Map<string, MetricSnapshot>();
-  for (const snapshot of snapshots) byTarget.set(snapshot.targetId, snapshot);
+  const byScope = new Map<string, MetricSnapshot>();
+  for (const snapshot of snapshots) {
+    byScope.set(alertScope(snapshot.targetId, snapshot.grade), snapshot);
+  }
 
   for (const rule of rules) {
     if (!rule.active) continue;
-    const snapshot = byTarget.get(rule.targetId);
+    const grade = gradeOf(rule.grade);
+    const snapshot = byScope.get(alertScope(rule.targetId, grade));
     if (!snapshot) {
-      warnings.push(`Rule ${rule.id} has no metric snapshot for ${rule.targetId}; its state is UNKNOWN.`);
+      warnings.push(`Rule ${rule.id} has no metric snapshot for ${rule.targetId} grade ${grade}; its state is UNKNOWN.`);
       states.push({
-        id: `alert-${rule.id}::${rule.targetId}`,
+        id: `alert-${rule.id}::${alertScope(rule.targetId, grade)}`,
         ruleId: rule.id,
         targetId: rule.targetId,
+        grade,
         metric: rule.metric,
         threshold: rule.threshold,
         status: 'UNKNOWN',
@@ -657,16 +674,17 @@ export function evaluateAlerts(
         observedAt: UNKNOWN,
         triggeredAt: UNKNOWN,
         acknowledged: false,
-        detail: 'No metric snapshot is available; the alert cannot be evaluated.',
+        detail: `No metric snapshot is available for grade ${grade}; the alert cannot be evaluated.`,
       });
       continue;
     }
 
     const observedAt = snapshot.observedAt ?? UNKNOWN;
     const base = {
-      id: `alert-${rule.id}::${snapshot.targetId}`,
+      id: `alert-${rule.id}::${alertScope(snapshot.targetId, grade)}`,
       ruleId: rule.id,
       targetId: snapshot.targetId,
+      grade,
       metric: rule.metric,
       threshold: rule.threshold,
       basis: snapshot.basis,
@@ -681,7 +699,7 @@ export function evaluateAlerts(
         status: 'UNKNOWN',
         value: UNKNOWN,
         triggeredAt: UNKNOWN,
-        detail: `Basis mismatch: rule requires ${rule.basis}, snapshot carries ${snapshot.basis}.`,
+        detail: `Basis mismatch: rule requires ${rule.basis}, snapshot carries ${snapshot.basis} for grade ${grade}.`,
       });
       continue;
     }
@@ -711,8 +729,8 @@ export function evaluateAlerts(
     }
     const status: AlertState['status'] = value === UNKNOWN ? 'UNKNOWN' : triggered ? 'TRIGGERED' : 'NOT_TRIGGERED';
     const detail = value === UNKNOWN
-      ? `${rule.metric} is UNKNOWN on basis ${snapshot.basis}; no trigger was fired.`
-      : `${rule.metric} ${value} ${triggered ? 'met' : 'did not meet'} threshold ${rule.threshold} on basis ${snapshot.basis} from ${snapshot.source}.`;
+      ? `${rule.metric} is UNKNOWN on basis ${snapshot.basis} for grade ${grade}; no trigger was fired.`
+      : `${rule.metric} ${value} ${triggered ? 'met' : 'did not meet'} threshold ${rule.threshold} on basis ${snapshot.basis} for grade ${grade} from ${snapshot.source}.`;
 
     states.push({
       ...base,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 
 import type { ConfidenceBand, MarketBasis } from '../../types/dataProduct.ts';
 import { apiFetch } from '../../utils/apiClient.ts';
+import { buildHoldingPayload, buildSalePayload } from '../../utils/trackingPayload.ts';
 import {
   BasisChip,
   ConfidenceChip,
@@ -85,6 +86,7 @@ interface AlertRow {
   id: string;
   ruleId: string;
   targetId: string;
+  grade: string;
   status: string;
   value: Value;
   basis: string;
@@ -148,6 +150,7 @@ export function TrackingView() {
   const [watchGrade, setWatchGrade] = useState('');
   const [holdAsset, setHoldAsset] = useState('');
   const [holdCost, setHoldCost] = useState('');
+  const [holdCurrency, setHoldCurrency] = useState('');
   const [holdBasis, setHoldBasis] = useState('PURCHASE_INVOICE');
   const [holdSource, setHoldSource] = useState('operator-entry');
   const [holdAcquired, setHoldAcquired] = useState('');
@@ -155,10 +158,12 @@ export function TrackingView() {
   const [holdShipping, setHoldShipping] = useState('');
   const [saleHolding, setSaleHolding] = useState('');
   const [saleProceeds, setSaleProceeds] = useState('');
+  const [saleCurrency, setSaleCurrency] = useState('');
   const [saleBasis, setSaleBasis] = useState('SALE_CONTRACT');
   const [saleSource, setSaleSource] = useState('operator-entry');
   const [saleDate, setSaleDate] = useState('');
   const [ruleTarget, setRuleTarget] = useState('');
+  const [ruleGrade, setRuleGrade] = useState('');
   const [ruleMetric, setRuleMetric] = useState('FMV_BELOW');
   const [ruleThreshold, setRuleThreshold] = useState('100');
   const [feeBasis, setFeeBasis] = useState('OPERATOR_FEE_TABLE_2026');
@@ -222,29 +227,35 @@ export function TrackingView() {
   function addHolding(e: FormEvent) {
     e.preventDefault();
     if (!holdAsset.trim()) return;
-    void submit('/api/tracking/holdings', {
-      assetId: holdAsset.trim(),
-      quantity: 1,
-      unitCost: holdCost.trim() === '' ? UNKNOWN_TEXT : Number(holdCost),
-      costBasis: holdBasis.trim(),
-      costSource: holdSource.trim(),
-      ...(holdAcquired ? { acquiredAt: holdAcquired } : {}),
-      ...(holdFees.trim() ? { fees: Number(holdFees) } : {}),
-      ...(holdShipping.trim() ? { shipping: Number(holdShipping) } : {}),
-    }, () => setHoldCost(''));
+    void submit('/api/tracking/holdings', buildHoldingPayload({
+      assetId: holdAsset,
+      unitCost: holdCost,
+      costCurrency: holdCurrency,
+      costBasis: holdBasis,
+      costSource: holdSource,
+      acquiredAt: holdAcquired,
+      fees: holdFees,
+      shipping: holdShipping,
+    }), () => {
+      setHoldCost('');
+      setHoldCurrency('');
+    });
   }
 
   function addSale(e: FormEvent) {
     e.preventDefault();
     if (!saleHolding) return;
-    void submit('/api/tracking/sales', {
+    void submit('/api/tracking/sales', buildSalePayload({
       holdingId: saleHolding,
-      quantity: 1,
-      unitProceeds: saleProceeds.trim() === '' ? UNKNOWN_TEXT : Number(saleProceeds),
-      proceedsBasis: saleBasis.trim(),
-      proceedsSource: saleSource.trim(),
-      ...(saleDate ? { soldAt: saleDate } : {}),
-    }, () => setSaleProceeds(''));
+      unitProceeds: saleProceeds,
+      proceedsCurrency: saleCurrency,
+      proceedsBasis: saleBasis,
+      proceedsSource: saleSource,
+      soldAt: saleDate,
+    }), () => {
+      setSaleProceeds('');
+      setSaleCurrency('');
+    });
   }
 
   function addRule(e: FormEvent) {
@@ -252,6 +263,7 @@ export function TrackingView() {
     if (!ruleTarget.trim()) return;
     void submit('/api/tracking/alerts/rules', {
       targetId: ruleTarget.trim(),
+      ...(ruleGrade.trim() ? { grade: ruleGrade.trim() } : {}),
       metric: ruleMetric,
       threshold: Number(ruleThreshold),
     });
@@ -356,6 +368,13 @@ export function TrackingView() {
               placeholder="Canonical asset id" className="w-full rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
             <div className="grid grid-cols-2 gap-2">
               <input aria-label="Unit cost" value={holdCost} onChange={(e) => setHoldCost(e.target.value)} placeholder="Unit cost (blank = UNKNOWN)" className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
+              <select aria-label="Cost currency" value={holdCurrency} onChange={(e) => setHoldCurrency(e.target.value)} required className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs">
+                <option value="">Currency (explicit)…</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="UNKNOWN">UNKNOWN</option>
+              </select>
               <input aria-label="Cost basis label" value={holdBasis} onChange={(e) => setHoldBasis(e.target.value)} className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
               <input aria-label="Cost source" value={holdSource} onChange={(e) => setHoldSource(e.target.value)} className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
               <input aria-label="Acquired date" type="date" value={holdAcquired} onChange={(e) => setHoldAcquired(e.target.value)} className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
@@ -372,6 +391,13 @@ export function TrackingView() {
             </select>
             <div className="grid grid-cols-2 gap-2">
               <input aria-label="Unit proceeds" value={saleProceeds} onChange={(e) => setSaleProceeds(e.target.value)} placeholder="Unit proceeds (blank = UNKNOWN)" className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
+              <select aria-label="Proceeds currency" value={saleCurrency} onChange={(e) => setSaleCurrency(e.target.value)} required className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs">
+                <option value="">Currency (explicit)…</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="UNKNOWN">UNKNOWN</option>
+              </select>
               <input aria-label="Proceeds basis label" value={saleBasis} onChange={(e) => setSaleBasis(e.target.value)} className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
               <input aria-label="Proceeds source" value={saleSource} onChange={(e) => setSaleSource(e.target.value)} className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
               <input aria-label="Sold date" type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
@@ -418,6 +444,7 @@ export function TrackingView() {
       >
         <form onSubmit={addRule} className="flex flex-wrap gap-2">
           <input aria-label="Alert target id" value={ruleTarget} onChange={(e) => setRuleTarget(e.target.value)} placeholder="Canonical asset id" className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
+          <input aria-label="Alert grade" value={ruleGrade} onChange={(e) => setRuleGrade(e.target.value)} placeholder="Grade (optional)" className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs" />
           <select aria-label="Alert metric" value={ruleMetric} onChange={(e) => setRuleMetric(e.target.value)} className="rounded border border-[#243040] bg-[#090C10] px-2 py-1.5 text-xs">
             <option value="FMV_BELOW">FMV_BELOW</option>
             <option value="FMV_ABOVE">FMV_ABOVE</option>
@@ -432,6 +459,7 @@ export function TrackingView() {
           <div key={alert.id} className="mt-3 rounded-md border border-[#243040] bg-[#090C10] p-3">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="font-mono text-[#F1F5F9]">{alert.targetId}</span>
+              <span className="font-mono text-[10px] text-[#94A3B8]">grade={display(alert.grade)}</span>
               <span className={alert.status === 'TRIGGERED' ? 'text-amber-300' : 'text-[#94A3B8]'}>{alert.status}</span>
               <span className="font-mono">{display(alert.value)}</span>
               <BasisChip basis={alert.basis as MarketBasis} />

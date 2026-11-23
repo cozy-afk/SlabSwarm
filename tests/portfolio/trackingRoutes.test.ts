@@ -14,6 +14,7 @@ import { createInMemoryRepositories } from '../../server/ingest/store.ts';
 import { createTrackingStore } from '../../server/portfolio/trackingStore.ts';
 import { createTrackingRouter, mountTrackingRouter } from '../../server/portfolio/trackingRoutes.ts';
 import type { TrackingStore } from '../../server/portfolio/trackingStore.ts';
+import { buildHoldingPayload, buildSalePayload } from '../../src/utils/trackingPayload.ts';
 
 const NOW = new Date('2026-11-23T00:00:00.000Z');
 const OBSERVED = '2026-11-21T00:00:00.000Z';
@@ -102,6 +103,35 @@ before(async () => {
       status: 'NORMALIZED',
       priceComponents: { grade: 'PSA 10' },
     });
+  }
+  for (const [grade, amounts] of [
+    ['PSA 9', [90, 95, 100]],
+    ['PSA 10', [190, 200, 210]],
+  ] as const) {
+    for (const [index, amount] of amounts.entries()) {
+      const suffix = `${grade.replace(/\s/g, '')}-${index}`;
+      const evidence = await repos.evidence.create({
+        sourceId: 'ebay_sold',
+        sourceRecordId: `tracking-a4-evidence-${suffix}`,
+        capturedAt: NOW.toISOString(),
+        observedAt: OBSERVED,
+        checksum: `tracking-a4-checksum-${suffix}`,
+        mimeType: 'application/json',
+        rawRef: `urn:tracking:A4:${suffix}`,
+        trustTier: 'HIGH',
+      });
+      await repos.marketObservations.create({
+        evidenceId: evidence.id,
+        targetIdentityRef: 'A4',
+        basis: 'SOLD',
+        amount,
+        currency: 'USD',
+        marketplace: 'ebay_sold',
+        observedAt: OBSERVED,
+        status: 'NORMALIZED',
+        priceComponents: { grade },
+      });
+    }
   }
   const app: Express = express();
   app.use(express.json());
@@ -362,6 +392,82 @@ test('a graded holding uses grade-filtered FMV and stays UNKNOWN without graded 
     .find((row: any) => row.holdingId === withComps.body.data.id);
   assert.equal(priced.valuation.value, 205, 'only explicitly graded SOLD comps price a graded holding');
   assert.equal(priced.unrealized, 25);
+});
+
+test('two graded alert rules on one target evaluate their own grade, not the last snapshot', async () => {
+  const psa9 = await request('/api/tracking/alerts/rules', {
+    method: 'POST',
+    body: { targetId: 'A4', grade: 'PSA 9', metric: 'FMV_BELOW', threshold: 120 },
+  });
+  const psa10 = await request('/api/tracking/alerts/rules', {
+    method: 'POST',
+    body: { targetId: 'A4', grade: 'PSA 10', metric: 'FMV_BELOW', threshold: 120 },
+  });
+  assert.equal(psa9.status, 201);
+  assert.equal(psa10.status, 201);
+
+  const evaluated = await request('/api/tracking/alerts/evaluate', { method: 'POST' });
+  assert.equal(evaluated.status, 200);
+  const ninth = evaluated.body.data.states.find((state: any) => state.ruleId === psa9.body.data.id);
+  const tenth = evaluated.body.data.states.find((state: any) => state.ruleId === psa10.body.data.id);
+  assert.equal(ninth.value, 95, 'PSA 9 rule uses the PSA 9 FMV');
+  assert.equal(ninth.status, 'TRIGGERED');
+  assert.equal(ninth.grade, 'PSA 9');
+  assert.equal(tenth.value, 200, 'PSA 10 rule uses the PSA 10 FMV');
+  assert.equal(tenth.status, 'NOT_TRIGGERED');
+  assert.equal(tenth.grade, 'PSA 10');
+});
+
+test('the shipped UI payload shape with explicit currencies produces valued holding and sale', async () => {
+  const holdingPayload = buildHoldingPayload({
+    assetId: 'A1',
+    unitCost: '80',
+    costCurrency: 'USD',
+    costBasis: 'PURCHASE_INVOICE',
+    costSource: 'operator-entry',
+  });
+  assert.equal(holdingPayload.costCurrency, 'USD', 'the form payload always names a currency');
+  const added = await request('/api/tracking/holdings', { method: 'POST', body: holdingPayload });
+  assert.equal(added.status, 201);
+  assert.equal(added.body.data.costCurrency, 'USD');
+
+  const salePayload = buildSalePayload({
+    holdingId: added.body.data.id,
+    unitProceeds: '150',
+    proceedsCurrency: 'USD',
+    proceedsBasis: 'SALE_CONTRACT',
+    proceedsSource: 'operator-entry',
+  });
+  assert.equal(salePayload.proceedsCurrency, 'USD');
+  const sold = await request('/api/tracking/sales', { method: 'POST', body: salePayload });
+  assert.equal(sold.status, 201);
+  assert.equal(sold.body.data.proceedsCurrency, 'USD');
+
+  const summary = await request('/api/tracking/summary');
+  const unrealized = summary.body.data.unrealized.find((row: any) => row.holdingId === added.body.data.id);
+  const realized = summary.body.data.realized.find((row: any) => row.saleId === sold.body.data.id);
+  assert.equal(unrealized.valuation.value, 105);
+  assert.equal(unrealized.unrealized, 25, 'one unit priced against explicit USD cost');
+  assert.equal(realized.gain, 70, 'one unit sold with explicit USD proceeds');
+});
+
+test('a UI payload without a known currency stays UNKNOWN instead of inventing one', async () => {
+  const payload = buildHoldingPayload({
+    assetId: 'A1',
+    unitCost: '80',
+    costCurrency: '',
+    costBasis: 'PURCHASE_INVOICE',
+    costSource: 'operator-entry',
+  });
+  assert.equal(payload.costCurrency, 'UNKNOWN');
+  const added = await request('/api/tracking/holdings', { method: 'POST', body: payload });
+  assert.equal(added.status, 201);
+  assert.equal(added.body.data.costCurrency, 'UNKNOWN');
+
+  const summary = await request('/api/tracking/summary');
+  const row = summary.body.data.unrealized.find((entry: any) => entry.holdingId === added.body.data.id);
+  assert.equal(row.unrealized, 'UNKNOWN');
+  assert.ok(row.warnings.some((warning: string) => /UNKNOWN|FX conversion/i.test(warning)));
 });
 
 test('the mounted tracking routes sit behind the existing operator gate', async () => {

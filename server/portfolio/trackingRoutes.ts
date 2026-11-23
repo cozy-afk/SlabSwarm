@@ -269,6 +269,7 @@ export function createTrackingRouter(options: TrackingRouteOptions = {}): Router
       const { fmv, priorFmv } = await valuationFor(rule.targetId, rule.grade);
       return {
         targetId: rule.targetId,
+        grade: rule.grade,
         basis: fmv.basis,
         source: fmv.source,
         value: fmv.value,
@@ -417,6 +418,7 @@ export function createTrackingRouter(options: TrackingRouteOptions = {}): Router
       const { fmv, priorFmv } = await valuationFor(rule.targetId, rule.grade);
       return {
         targetId: rule.targetId,
+        grade: rule.grade,
         basis: fmv.basis,
         source: fmv.source,
         value: fmv.value,
