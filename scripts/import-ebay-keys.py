@@ -12,8 +12,7 @@ Or save the block to a local file and run:
 
 The script detects labels such as "Client ID", "Client secret", "Cert ID" and
 "Refresh token", whether the label is inline or on the line before the value.
-If the paste contains both Sandbox and Production sections, only the section
-matching --api-env is imported. It writes the matching values to
+If the paste contains both Sandbox and Production keysets, the importer selects one by the App ID marker (`-SBX-` or `-PRD-`) matching `--api-env`, not by the page's section headers. It writes the matching values to
 /opt/slabswarm/.env with mode 0600. It reports only field names and line
 numbers; values are never printed. Unlabeled blobs and masked values are
 rejected rather than guessed.
@@ -54,13 +53,42 @@ def key_for_label(text: str) -> str | None:
     return None
 
 
+def group_env(group: dict[str, object]) -> str | None:
+    """eBay App IDs carry an explicit -SBX- or -PRD- environment marker."""
+    client_id = str(group.get("EBAY_CLIENT_ID", "")).upper()
+    if "-SBX-" in client_id:
+        return "sandbox"
+    if "-PRD-" in client_id:
+        return "production"
+    section = group.get("section")
+    return str(section).lower() if section else None
+
+
 def detect(text: str, api_env: str) -> tuple[dict[str, str], list[int], list[int]]:
-    """Find labelled values in the chosen section. Labels may be inline or on the preceding line."""
-    found: dict[str, str] = {}
+    """Parse labelled keys into groups, then select the requested eBay keyset.
+
+    Labels may be inline or on the preceding line. eBay often prints the
+    Sandbox/Production headers far above the keys, so environment is chosen
+    from the App ID marker (-SBX-/-PRD-) rather than from those headers.
+    """
+    groups: list[dict[str, object]] = []
     unlabeled: list[int] = []
     masked: list[int] = []
     pending: str | None = None
+    current: dict[str, object] | None = None
     section: str | None = None
+
+    def assign(key: str, value: str, number: int) -> None:
+        nonlocal current
+        if "•" in value or "*" in value:
+            masked.append(number)
+            return
+        if key == "EBAY_CLIENT_ID":
+            current = {"EBAY_CLIENT_ID": value, "section": section}
+            groups.append(current)
+        elif current is not None:
+            current[key] = value
+
     for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line:
@@ -69,18 +97,13 @@ def detect(text: str, api_env: str) -> tuple[dict[str, str], list[int], list[int
             section = line.lower()
             pending = None
             continue
-        if section is not None and section != api_env:
-            continue
         # Inline form: "Client ID: value" or "App ID (Client ID) value".
         match = re.match(r"^([^:=]{2,60})\s*[:=\t]\s*(.+)$", line)
         if match:
             key = key_for_label(match.group(1))
             value = match.group(2).strip()
             if key:
-                if SECRET_RE.match(value):
-                    found[key] = value
-                elif "•" in value or "*" in value:
-                    masked.append(number)
+                assign(key, value, number)
                 pending = None
                 continue
         # Label on its own line; the value follows on a later line. Never treat
@@ -89,17 +112,25 @@ def detect(text: str, api_env: str) -> tuple[dict[str, str], list[int], list[int
         if key:
             pending = key
             continue
-        if pending:
-            if SECRET_RE.match(line):
-                found[pending] = line
-                pending = None
-                continue
-            if "•" in line or "*" in line:
-                masked.append(number)
-                pending = None
-                continue
+        if pending and SECRET_RE.match(line):
+            assign(pending, line, number)
+            pending = None
+            continue
+        if pending and ("•" in line or "*" in line):
+            masked.append(number)
+            pending = None
+            continue
         if SECRET_RE.match(line):
             unlabeled.append(number)
+
+    matching = [group for group in groups if group_env(group) == api_env]
+    if not matching and len(groups) == 1:
+        matching = groups
+    if not matching:
+        return {}, unlabeled, masked
+    selected = matching[0]
+    found = {key: str(value) for key, value in selected.items()
+             if key in {"EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_REFRESH_TOKEN"}}
     return found, unlabeled, masked
 
 
