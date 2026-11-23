@@ -112,10 +112,13 @@ test('active report reads the injected canonical repository', async () => {
   const body = await response.json();
   assert.equal(response.status, 200);
   const cards = body.data?.cards ?? [];
+  const summary = body.data?.summary ?? {};
   assert.ok(
-    cards.some((card: { id?: string }) => card.id === TARGET),
-    `expected canonical observation ${TARGET} in active report, got ids ${cards.map((c: any) => c.id).join(',')}`,
+    cards.some((card: any) => card.id === DB_TARGET),
+    `expected DB-shaped canonical observation ${DB_TARGET} in active report, got ids ${cards.map((c: any) => c.id).join(',')}`,
   );
+  assert.equal(summary.cardsObserved, cards.length);
+  assert.ok(cards.length >= 2, 'report must not collapse distinct canonical targets into one UNKNOWN card');
 });
 
 test('research run accepts the UI payload and uses canonical evidence', async () => {

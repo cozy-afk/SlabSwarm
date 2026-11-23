@@ -9,7 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { DiscoveryFinding } from '../contracts/dataProduct.ts';
+import type { DiscoveryFinding, MarketObservation } from '../contracts/dataProduct.ts';
 import { basisOf, currencyOf, evidenceIdsOf, sourceOf } from './fields.ts';
 import type { AnalyticsStore } from './types.ts';
 
@@ -66,6 +66,21 @@ function median(values: number[]): number {
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
+}
+
+/**
+ * Resolve the canonical target of an observation. Postgres rows expose
+ * `targetIdentityId`; in-memory/ingest rows use `targetIdentityRef`.
+ */
+export function observationTargetRef(observation: MarketObservation): string {
+  if (typeof observation.targetIdentityRef === 'string' && observation.targetIdentityRef.trim() !== '') {
+    return observation.targetIdentityRef;
+  }
+  const raw = observation as unknown as Record<string, unknown>;
+  if (typeof raw.targetIdentityId === 'string' && raw.targetIdentityId.trim() !== '') {
+    return raw.targetIdentityId;
+  }
+  return 'unresolved';
 }
 
 export function runDiscoverySweep(
@@ -138,7 +153,7 @@ export function runDiscoverySweep(
 
   const byTarget = new Map<string, typeof observations>();
   for (const observation of observations) {
-    const target = observation.targetIdentityRef || 'unresolved';
+    const target = observationTargetRef(observation);
     const bucket = byTarget.get(target);
     if (bucket) bucket.push(observation);
     else byTarget.set(target, [observation]);

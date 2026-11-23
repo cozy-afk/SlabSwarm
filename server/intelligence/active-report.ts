@@ -17,7 +17,7 @@ import {
   type Freshness,
   type PriceBand,
 } from '../contracts/activeReport.ts';
-import { runDiscoverySweep } from '../analytics/discovery.ts';
+import { observationTargetRef, runDiscoverySweep } from '../analytics/discovery.ts';
 import { readLakeManifest, type ParquetExportResult } from '../analytics/parquet.ts';
 import { gameOf } from '../analytics/fields.ts';
 import { createAnalyticsStore } from '../analytics/store.ts';
@@ -260,10 +260,8 @@ export async function buildActiveReport(
 
   const byTarget = new Map<string, MarketObservation[]>();
   for (const observation of observations) {
-    const target = typeof observation.targetIdentityRef === 'string' &&
-      observation.targetIdentityRef.trim() !== ''
-      ? observation.targetIdentityRef
-      : UNKNOWN;
+    const resolved = observationTargetRef(observation);
+    const target = resolved === 'unresolved' ? UNKNOWN : resolved;
     const bucket = byTarget.get(target);
     if (bucket) bucket.push(observation);
     else byTarget.set(target, [observation]);

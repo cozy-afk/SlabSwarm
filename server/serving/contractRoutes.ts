@@ -15,6 +15,7 @@ import type { MarketObservation } from '../contracts/dataProduct.ts';
 import { forecastRepository } from '../forecast/repository.ts';
 import { getLearningState } from '../forecast/learning.ts';
 import { runSwarmResearch, swarmRunStore } from '../swarm/run.ts';
+import { observationTargetRef } from '../analytics/discovery.ts';
 import type { EvidenceItem } from '../swarm/tools.ts';
 import { envelope, errorEnvelope, newContext, UNKNOWN } from './catalog.ts';
 
@@ -53,17 +54,9 @@ function bandOf(value: unknown): EvidenceItem['confidence'] {
   return 'LOW';
 }
 
-function targetRefOf(row: MarketObservation): string {
-  const raw = row as unknown as Record<string, unknown>;
-  if (typeof raw.targetIdentityRef === 'string' && raw.targetIdentityRef.trim() !== '') {
-    return raw.targetIdentityRef;
-  }
-  return typeof raw.targetIdentityId === 'string' ? raw.targetIdentityId : UNKNOWN;
-}
-
 function evidenceForTarget(rows: MarketObservation[], targetId: string): EvidenceItem[] {
   return rows
-    .filter((row) => targetRefOf(row) === targetId)
+    .filter((row) => observationTargetRef(row) === targetId)
     .map((row) => {
       const raw = row as unknown as Record<string, unknown>;
       return {
@@ -129,8 +122,8 @@ export function createDataProductContractRouter(
     const rows = await repositories.marketObservations.list();
     const counts = new Map<string, number>();
     for (const row of rows) {
-      const target = targetRefOf(row);
-      if (target && target !== UNKNOWN) counts.set(target, (counts.get(target) ?? 0) + 1);
+      const target = observationTargetRef(row);
+      if (target !== 'unresolved') counts.set(target, (counts.get(target) ?? 0) + 1);
     }
     const selected = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
     const bodyTarget = typeof body.targetId === 'string' ? body.targetId.trim() : '';
