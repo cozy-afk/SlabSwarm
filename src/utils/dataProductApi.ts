@@ -324,6 +324,8 @@ export interface MatchCandidateView {
   evidenceId: string;
   title: string;
   status: MatchStatus;
+  /** GATE = auto-enqueued by the quarantine gate; API = operator submission. */
+  origin: 'GATE' | 'API';
   enqueuedAt: string;
   reviewedAt?: string;
   reviewNote?: string;

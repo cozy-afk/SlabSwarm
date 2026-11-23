@@ -20,6 +20,12 @@ import {
   type MatchAssessment,
 } from './matchGate.ts';
 import {
+  attachQaHost,
+  detachQaHost,
+  issueApprovalAuthority,
+  revokeApprovalAuthority,
+} from './qaAuthority.ts';
+import {
   promoteToCanonical,
   type CanonicalWriteReport,
 } from './resolver.ts';
@@ -40,11 +46,15 @@ export interface QaProvenance {
   attribution: string;
 }
 
+export type QaOrigin = 'GATE' | 'API';
+
 export interface QaCandidate {
   id: string;
   evidenceId: string;
   title: string;
   status: QaStatus;
+  /** GATE = auto-enqueued by the quarantine gate; API = operator submission. */
+  origin: QaOrigin;
   enqueuedAt: string;
   reviewedAt?: string;
   reviewNote?: string;
@@ -181,8 +191,11 @@ export function createMatchReviewQueue(options: MatchReviewQueueOptions = {}) {
     return found ? clone(found) : null;
   }
 
-  async function enqueue(proposal: FreeFeedRecord): Promise<QaCandidate> {
-    const assessment = assessProposal(proposal, floor);
+  async function enqueue(
+    proposal: FreeFeedRecord,
+    options: { assessment?: MatchAssessment; origin?: QaOrigin } = {},
+  ): Promise<QaCandidate> {
+    const assessment = options.assessment ?? assessProposal(proposal, floor);
     if (assessment.decision !== 'QUARANTINE') {
       throw new QaError(
         'Only below-floor matches belong in the QA queue.',
@@ -203,6 +216,7 @@ export function createMatchReviewQueue(options: MatchReviewQueueOptions = {}) {
       evidenceId,
       title,
       status: 'PENDING',
+      origin: options.origin ?? 'API',
       enqueuedAt: now().toISOString(),
       assessment: clone(assessment),
       provenance: provenanceOf(proposal),
@@ -241,14 +255,29 @@ export function createMatchReviewQueue(options: MatchReviewQueueOptions = {}) {
     const correctionId = `qa-cor-${digest(`${id}:${decidedAt}:${action}`)}`;
     let canonical: CanonicalWriteReport | null = null;
     if (action === 'APPROVE') {
-      // The only release path: the correction id is injected as a host seam on
-      // the immutable proposal so the identity decision can name its authority.
-      canonical = await promoteToCanonical({
-        ...clone(current.proposal),
-        repositories,
-        now: () => new Date(decidedAt),
-        qaOverride: correctionId,
-      } as FreeFeedRecord);
+      // Authority is issued by this human review path only and handed to the
+      // resolver through a host argument, never through the proposal.
+      issueApprovalAuthority({
+        correctionId,
+        candidateId: id,
+        reviewer: input.reviewer,
+        note: typeof input.note === 'string' && input.note.trim() !== ''
+          ? input.note
+          : null,
+        decidedAt,
+      });
+      try {
+        canonical = await promoteToCanonical(
+          {
+            ...clone(current.proposal),
+            repositories,
+            now: () => new Date(decidedAt),
+          } as FreeFeedRecord,
+          { approvalAuthority: correctionId },
+        );
+      } finally {
+        revokeApprovalAuthority(correctionId);
+      }
       if (!canonical.accepted) {
         const detail = [...canonical.reasons, ...canonical.errors].join('; ');
         throw new QaError(
@@ -290,7 +319,29 @@ export function createMatchReviewQueue(options: MatchReviewQueueOptions = {}) {
     return { candidate: clone(decided), correction: clone(correction), canonical };
   }
 
-  return { list, get, enqueue, listCorrections, review };
+  /** Bind gate producers to this queue. No listener or public route is added. */
+  function attachToHost(): void {
+    attachQaHost({
+      enqueueQuarantine: async (event) => {
+        const queued = await enqueue(event.proposal, {
+          assessment: event.assessment,
+          origin: 'GATE',
+        });
+        return queued.id;
+      },
+      isApprovedCorrection: async (correctionId) => corrections.some(
+        (row) => row.id === correctionId
+          && row.action === 'APPROVE'
+          && row.canonical?.accepted === true,
+      ),
+    });
+  }
+
+  function detachFromHost(): void {
+    detachQaHost();
+  }
+
+  return { list, get, enqueue, listCorrections, review, attachToHost, detachFromHost };
 }
 
 export type MatchReviewQueue = ReturnType<typeof createMatchReviewQueue>;

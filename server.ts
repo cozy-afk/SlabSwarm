@@ -207,6 +207,9 @@ export async function createApp(options: CreateAppOptions = {}) {
     repositories: options.matchQaRepositories ?? (harvestRepositories as Repositories),
     floor: options.matchQaFloor,
   });
+  // Bind the server-side gate to this queue: quarantines enqueue review items
+  // without any HTTP call, new listener or model involvement.
+  matchQaStore.attachToHost();
 
   // Canonical observations now arrive from two lanes: the ingest ledger and
   // the SQL-backed review queue. Union them by id so an approved web harvest

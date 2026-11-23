@@ -19,6 +19,7 @@ import {
   type ExpectedAttributes,
   type MatchAssessment,
 } from '../identity/matchGate.ts';
+import { reportQuarantine } from '../identity/qaAuthority.ts';
 import { sanitizeError } from './runner.ts';
 import type {
   CandidateRepository,
@@ -52,6 +53,8 @@ export interface PromotionResult {
   unpromotedPriced: string[];
   /** Candidate ids withheld from canonical observations by the hard-attribute gate. */
   quarantined: string[];
+  /** QA review ids created by the gate for quarantined candidates. */
+  qaReviewIds: string[];
 }
 
 export interface PromoteOptions {
@@ -163,6 +166,37 @@ export function candidateMatchAssessment(candidate: IngestCandidate): MatchAsses
   });
 }
 
+/** Preserve every source-derived field the ledger candidate already carries. */
+export function candidateToProposal(candidate: IngestCandidate): FreeFeedRecord {
+  const components = candidate.priceComponents ?? {};
+  const title = typeof components.title === 'string' ? components.title : '';
+  return {
+    sourceId: candidate.sourceId || 'UNKNOWN',
+    externalId: candidate.evidenceId,
+    vertical: (components.vertical ?? 'UNKNOWN') as FreeFeedRecord['vertical'],
+    property: String(components.property ?? 'UNKNOWN'),
+    set: String(components.set ?? 'UNKNOWN'),
+    name: String(components.name ?? (title || 'UNKNOWN')),
+    number: String(components.number ?? 'UNKNOWN'),
+    finish: String(components.finish ?? 'UNKNOWN'),
+    currency: candidate.currency || 'UNKNOWN',
+    amount: candidate.amount ?? 'UNKNOWN',
+    basis: candidate.basis,
+    observedAt: candidate.observedAt,
+    sourceUrl: String(components.sourceUrl ?? ''),
+    license: String(components.license ?? 'UNKNOWN'),
+    attribution: String(components.attribution ?? 'UNKNOWN'),
+    capturedAt: candidate.capturedAt,
+    lineage: [...candidate.lineage],
+    confidence: candidate.confidence,
+    ...(title ? { title } : {}),
+    ...(components.expectedAttributes ? { expectedAttributes: components.expectedAttributes } : {}),
+    ...(typeof components.confidenceFloor === 'number'
+      ? { confidenceFloor: components.confidenceFloor }
+      : {}),
+  } as FreeFeedRecord;
+}
+
 /**
  * Promote all admissible candidates once. Idempotency is keyed on
  * evidenceId + targetIdentityRef + basis across the existing observation set
@@ -182,6 +216,7 @@ export async function promoteCandidates(
     errors: [],
     unpromotedPriced: [],
     quarantined: [],
+    qaReviewIds: [],
   };
 
   const [candidates, existing] = await Promise.all([
@@ -216,6 +251,12 @@ export async function promoteCandidates(
       const id = candidateIdOf(candidate);
       quarantinedIds.add(id);
       result.quarantined.push(id);
+      const queued = await reportQuarantine({
+        proposal: candidateToProposal(candidate),
+        assessment,
+      });
+      if (queued.reviewId) result.qaReviewIds.push(queued.reviewId);
+      if (queued.error) result.errors.push(`QA enqueue failed for ${id}: ${queued.error}`);
       continue;
     }
     const key = observationKey(candidate.evidenceId, candidate.targetIdentityRef, candidate.basis);

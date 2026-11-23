@@ -136,7 +136,7 @@ export function MatchReviewView() {
                         <span className="font-mono text-[10px] text-[#64748B]">{candidate.status}</span>
                       </div>
                       <p className="mt-1 font-mono text-[10px] text-[#94A3B8]">
-                        id={candidate.id} · evidence={candidate.evidenceId}
+                        id={candidate.id} · evidence={candidate.evidenceId} · origin={candidate.origin}
                       </p>
                       <p className="mt-1 font-mono text-[10px] text-[#94A3B8]">
                         score={candidate.assessment.score} · floor={candidate.assessment.floor} · decision={candidate.assessment.decision}

@@ -26,6 +26,10 @@ import {
   type ExpectedAttributes,
   type MatchAssessment,
 } from './matchGate.ts';
+import {
+  hasApprovedCorrectionAuthority,
+  reportQuarantine,
+} from './qaAuthority.ts';
 import type { ConfidenceBand, IngestCandidate } from '../ingest/types.ts';
 
 const UNKNOWN = 'UNKNOWN';
@@ -59,11 +63,12 @@ interface Proposal extends FreeFeedRecord {
   expectedAttributes?: unknown;
   /** Numeric confidence floor override for this proposal. */
   confidenceFloor?: unknown;
-  /**
-   * Host-injected QA correction id. Only the internal review store may set it
-   * after a human APPROVE; a model or a public caller never supplies it.
-   */
-  qaOverride?: unknown;
+}
+
+/** Host-only arguments. Never sourced from a proposal, payload or model. */
+export interface CanonicalHostOptions {
+  /** Server-issued authority from an internal human APPROVE correction. */
+  approvalAuthority?: unknown;
 }
 
 export type IdentityRule =
@@ -130,6 +135,8 @@ export interface CanonicalWriteReport {
   promotion: PromotionResult | null;
   /** Hard-attribute match assessment; null for records with no listing title. */
   quarantine: MatchAssessment | null;
+  /** Id of the QA review item auto-created by the gate, when a host is bound. */
+  quarantineReviewId: string | null;
 }
 
 function text(value: unknown): string {
@@ -410,7 +417,10 @@ export async function resolveCandidate(candidate: FreeFeedRecord): Promise<Ident
  * `accepted` is true only when the card, aliases, decision row and (for a
  * priced proposal) the observation all committed; any failure rolls the whole
  * unit back and is reported, never hidden behind a partial success. */
-export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<CanonicalWriteReport> {
+export async function promoteToCanonical(
+  candidate: FreeFeedRecord,
+  host: CanonicalHostOptions = {},
+): Promise<CanonicalWriteReport> {
   const proposal = candidate as Proposal;
   const repos = repositoriesOf(proposal);
   const evidenceId = evidenceIdOf(proposal);
@@ -427,6 +437,7 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
     identityDecision: null,
     promotion: null,
     quarantine: null,
+    quarantineReviewId: null,
   };
 
   // --- Task 16 hard-attribute gate -----------------------------------------
@@ -434,6 +445,14 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
   // keep their identity rules unchanged. A below-floor match is quarantined
   // before any card, alias, decision or price observation can be written.
   let qaCorrectionId: string | null = null;
+  // Authority is host-only. A proposal/evidence/model field named qaOverride is
+  // deliberately never read; only a server-issued id backed by a recorded human
+  // APPROVE can release a quarantine.
+  const suppliedAuthority = host.approvalAuthority;
+  if (typeof suppliedAuthority === 'string'
+    && await hasApprovedCorrectionAuthority(suppliedAuthority)) {
+    qaCorrectionId = suppliedAuthority;
+  }
   if (typeof proposal.title === 'string' && proposal.title.trim() !== '') {
     const assessment = assessMatch({
       title: proposal.title,
@@ -443,24 +462,25 @@ export async function promoteToCanonical(candidate: FreeFeedRecord): Promise<Can
         : undefined,
     });
     report.quarantine = assessment;
-    if (assessment.decision === 'QUARANTINE') {
-      const override = proposal.qaOverride;
-      // Only a syntactically real correction id from the internal review store
-      // can release a quarantine; a caller cannot spoof the override seam.
-      qaCorrectionId = typeof override === 'string'
-        && /^qa-cor-[0-9a-f]{16}$/.test(override)
-        ? override
-        : null;
-      if (!qaCorrectionId) {
-        report.reasons.push(
-          `QUARANTINED: hard-attribute match scored ${assessment.score} below floor `
-          + `${assessment.floor} (${assessment.reasons.join(', ')}); no canonical write`,
-        );
-        return report;
-      }
-      // The override authority is recorded on the identity decision below;
-      // `reasons` is reserved for validation/commit failures.
+    if (assessment.decision === 'QUARANTINE' && !qaCorrectionId) {
+      // The gate itself creates the review item through the host seam: a
+      // quarantine is never just a reason string that nobody sees.
+      const queued = await reportQuarantine({ proposal: candidate, assessment });
+      report.quarantineReviewId = queued.reviewId;
+      const audit = queued.reviewId
+        ? `QA review ${queued.reviewId} created`
+        : queued.error
+          ? `QA enqueue failed: ${queued.error}`
+          : 'no QA host is attached';
+      report.reasons.push(
+        `QUARANTINED: hard-attribute match scored ${assessment.score} below floor `
+        + `${assessment.floor} (${assessment.reasons.join(', ')}); ${audit}; no canonical write`,
+      );
+      if (queued.error) report.errors.push(queued.error);
+      return report;
     }
+    // When a valid host authority is present, the decision below records it;
+    // `reasons` is reserved for validation/commit failures.
   }
 
   // Nothing is written until every canonical provenance field is present.
