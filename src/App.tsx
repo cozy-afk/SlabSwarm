@@ -10,6 +10,7 @@ import {
   Link2,
   Menu,
   Search,
+  ShieldCheck,
   Terminal,
   TrendingUp,
   X,
@@ -21,6 +22,7 @@ import { CatalogView } from './components/product/CatalogView.tsx';
 import { ForecastLabView } from './components/product/ForecastLabView.tsx';
 import { LearningView } from './components/product/LearningView.tsx';
 import { MarketIntelligenceView } from './components/product/MarketIntelligenceView.tsx';
+import { MatchReviewView } from './components/product/MatchReviewView.tsx';
 import { ResearchSwarmView } from './components/product/ResearchSwarmView.tsx';
 import { SourcesView } from './components/product/SourcesView.tsx';
 import { SqlLabView } from './components/product/SqlLabView.tsx';
@@ -31,6 +33,7 @@ import { apiFetch } from './utils/apiClient.ts';
 type ActiveTab =
   | 'sources'
   | 'web-sources'
+  | 'match-qa'
   | 'catalog'
   | 'intelligence'
   | 'active-report'
@@ -57,6 +60,12 @@ const NAV_ITEMS: Array<{
     label: 'Web Sources',
     sublabel: 'Harvest Review Queue',
     icon: Globe,
+  },
+  {
+    id: 'match-qa',
+    label: 'Match QA',
+    sublabel: 'Hard-Attribute Quarantine',
+    icon: ShieldCheck,
   },
   {
     id: 'catalog',
@@ -144,6 +153,8 @@ export default function App() {
         return <SourcesView />;
       case 'web-sources':
         return <WebSourcesView />;
+      case 'match-qa':
+        return <MatchReviewView />;
       case 'catalog':
         return <CatalogView />;
       case 'intelligence':

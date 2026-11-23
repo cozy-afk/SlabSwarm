@@ -18,6 +18,9 @@ import {
 import { createOperatorAuthManager } from './server/auth.ts';
 import { mountDbRoutes } from './server/db/routes.ts';
 import { createDefaultRepositories } from './server/db/repositories/index.ts';
+import type { Repositories } from './server/db/repositories/index.ts';
+import { createMatchReviewQueue, type MatchReviewQueue } from './server/identity/qaQueue.ts';
+import { mountMatchReviewRouter } from './server/identity/qaRoutes.ts';
 import { createIngestRouter } from './server/ingest/routes.ts';
 import { createDurableRepositories } from './server/ingest/store.ts';
 import { setActiveReportRepositories } from './server/intelligence/active-report.ts';
@@ -167,6 +170,10 @@ export interface CreateAppOptions {
   lakeDir?: string;
   /** Inject the canonical lake source for tests; production uses the durable ledger. */
   lakeSource?: CanonicalLakeSource;
+  /** Task 16: inject the QA queue or its repositories/floor; no listener is added. */
+  matchQaStore?: MatchReviewQueue;
+  matchQaRepositories?: Repositories;
+  matchQaFloor?: number;
 }
 
 // Build the Express application with all routes. Exported so API tests can
@@ -194,6 +201,15 @@ export async function createApp(options: CreateAppOptions = {}) {
   const harvestRepositories = options.webHarvestRepositories ?? createDefaultRepositories();
   const harvestStore = options.webHarvestStore ??
     createWebHarvestStore({ repositories: harvestRepositories });
+  // Task 16: the internal QA queue shares the canonical repositories but adds
+  // no listener and no public route. It is mounted behind the same gate below.
+  const matchQaStore = options.matchQaStore ?? createMatchReviewQueue({
+    repositories: options.matchQaRepositories ?? (harvestRepositories as Repositories),
+    floor: options.matchQaFloor,
+  });
+  // Bind the server-side gate to this queue: quarantines enqueue review items
+  // without any HTTP call, new listener or model involvement.
+  matchQaStore.attachToHost();
 
   // Canonical observations now arrive from two lanes: the ingest ledger and
   // the SQL-backed review queue. Union them by id so an approved web harvest
@@ -248,6 +264,11 @@ export async function createApp(options: CreateAppOptions = {}) {
   // other admin route. No new listener, firewall, DNS or gate behaviour change.
   app.use('/api/web-harvest', operatorAuth.requireAuth);
   mountWebHarvestRouter(app, { store: harvestStore, onApproved: rebuildLake });
+
+  // Task 16: same shared operator gate for the internal match QA queue. No new
+  // listener, firewall/DNS change, or model-driven identity decision.
+  app.use('/api/qa', operatorAuth.requireAuth);
+  mountMatchReviewRouter(app, { store: matchQaStore });
   app.get('/api/admin/web-harvest/lake-export', operatorAuth.requireAuth, (_req, res) => {
     res.json(envelope({ last: lastHarvestExport.record }, newContext(() => new Date()), {
       basis: UNKNOWN as MarketBasis,

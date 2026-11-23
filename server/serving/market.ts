@@ -209,8 +209,23 @@ export async function loadFacts(
   const rows = await observations.list();
   const warnings: string[] = [];
   const matched = rows.filter((row) => targetRefMatches(String(row.targetIdentityRef ?? ''), targetId));
+  // Defense in depth: a quarantined hard-attribute match must never reach a
+  // price summary or FMV even if a stale/imported row slipped into the ledger.
+  const quarantined = matched.filter((row) => {
+    const components = (row.priceComponents ?? {}) as Record<string, unknown>;
+    return (row.status as string) === 'QUARANTINED'
+      || components.hardAttributeDisposition === 'QUARANTINE'
+      || components.hardAttributeDisposition === 'QUARANTINED';
+  });
+  if (quarantined.length > 0) {
+    warnings.push(
+      `Excluded ${quarantined.length} hard-attribute quarantined observation(s) from FMV inputs: `
+      + `${quarantined.map((row) => row.id).join(', ')}.`,
+    );
+  }
+  const eligible = matched.filter((row) => !quarantined.includes(row));
   const facts: ObservationFact[] = [];
-  for (const row of matched) {
+  for (const row of eligible) {
     const linked = await evidence.get(row.evidenceId);
     if (!linked) {
       warnings.push(`Observation ${row.id} has no linked evidence row; capture time is UNKNOWN.`);

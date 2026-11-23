@@ -14,6 +14,12 @@ import {
   promoteToCanonical,
   resolveCandidate,
 } from '../identity/resolver.ts';
+import {
+  assessMatch,
+  type ExpectedAttributes,
+  type MatchAssessment,
+} from '../identity/matchGate.ts';
+import { reportQuarantine } from '../identity/qaAuthority.ts';
 import { sanitizeError } from './runner.ts';
 import type {
   CandidateRepository,
@@ -45,6 +51,10 @@ export interface PromotionResult {
    * Empty means the priced-candidate coverage invariant holds.
    */
   unpromotedPriced: string[];
+  /** Candidate ids withheld from canonical observations by the hard-attribute gate. */
+  quarantined: string[];
+  /** QA review ids created by the gate for quarantined candidates. */
+  qaReviewIds: string[];
 }
 
 export interface PromoteOptions {
@@ -137,6 +147,57 @@ function candidateIdOf(candidate: IngestCandidate): string {
 }
 
 /**
+ * Listing-title candidates pass the same deterministic hard-attribute gate as
+ * canonical proposals. Candidates without a title are legacy facts and are
+ * deliberately left on the existing promotion path.
+ */
+export function candidateMatchAssessment(candidate: IngestCandidate): MatchAssessment | null {
+  const components = candidate.priceComponents ?? {};
+  const title = (candidate as { title?: unknown }).title ?? components.title;
+  if (typeof title !== 'string' || title.trim() === '') return null;
+  const expected = (candidate as { expectedAttributes?: unknown }).expectedAttributes
+    ?? components.expectedAttributes;
+  const floor = (candidate as { confidenceFloor?: unknown }).confidenceFloor
+    ?? components.confidenceFloor;
+  return assessMatch({
+    title,
+    expected: (expected ?? null) as ExpectedAttributes | null,
+    floor: typeof floor === 'number' ? floor : undefined,
+  });
+}
+
+/** Preserve every source-derived field the ledger candidate already carries. */
+export function candidateToProposal(candidate: IngestCandidate): FreeFeedRecord {
+  const components = candidate.priceComponents ?? {};
+  const title = typeof components.title === 'string' ? components.title : '';
+  return {
+    sourceId: candidate.sourceId || 'UNKNOWN',
+    externalId: candidate.evidenceId,
+    vertical: (components.vertical ?? 'UNKNOWN') as FreeFeedRecord['vertical'],
+    property: String(components.property ?? 'UNKNOWN'),
+    set: String(components.set ?? 'UNKNOWN'),
+    name: String(components.name ?? (title || 'UNKNOWN')),
+    number: String(components.number ?? 'UNKNOWN'),
+    finish: String(components.finish ?? 'UNKNOWN'),
+    currency: candidate.currency || 'UNKNOWN',
+    amount: candidate.amount ?? 'UNKNOWN',
+    basis: candidate.basis,
+    observedAt: candidate.observedAt,
+    sourceUrl: String(components.sourceUrl ?? ''),
+    license: String(components.license ?? 'UNKNOWN'),
+    attribution: String(components.attribution ?? 'UNKNOWN'),
+    capturedAt: candidate.capturedAt,
+    lineage: [...candidate.lineage],
+    confidence: candidate.confidence,
+    ...(title ? { title } : {}),
+    ...(components.expectedAttributes ? { expectedAttributes: components.expectedAttributes } : {}),
+    ...(typeof components.confidenceFloor === 'number'
+      ? { confidenceFloor: components.confidenceFloor }
+      : {}),
+  } as FreeFeedRecord;
+}
+
+/**
  * Promote all admissible candidates once. Idempotency is keyed on
  * evidenceId + targetIdentityRef + basis across the existing observation set
  * and within the current batch. Errors are sanitised so credentials in an
@@ -154,6 +215,8 @@ export async function promoteCandidates(
     duplicates: 0,
     errors: [],
     unpromotedPriced: [],
+    quarantined: [],
+    qaReviewIds: [],
   };
 
   const [candidates, existing] = await Promise.all([
@@ -162,6 +225,7 @@ export async function promoteCandidates(
   ]);
   const keys = new Set<string>();
   const failedKeys = new Set<string>();
+  const quarantinedIds = new Set<string>();
   for (const observation of existing) {
     // Canonical rows persist the ref in `target_identity_id`; the JSON ledger
     // keeps `targetIdentityRef`. Accept both so idempotency works on either.
@@ -182,6 +246,19 @@ export async function promoteCandidates(
       result.skipped += 1;
       continue;
     }
+    const assessment = candidateMatchAssessment(candidate);
+    if (assessment?.decision === 'QUARANTINE') {
+      const id = candidateIdOf(candidate);
+      quarantinedIds.add(id);
+      result.quarantined.push(id);
+      const queued = await reportQuarantine({
+        proposal: candidateToProposal(candidate),
+        assessment,
+      });
+      if (queued.reviewId) result.qaReviewIds.push(queued.reviewId);
+      if (queued.error) result.errors.push(`QA enqueue failed for ${id}: ${queued.error}`);
+      continue;
+    }
     const key = observationKey(candidate.evidenceId, candidate.targetIdentityRef, candidate.basis);
     if (keys.has(key)) {
       result.duplicates += 1;
@@ -199,7 +276,14 @@ export async function promoteCandidates(
       marketplace: candidate.marketplace ?? null,
       observedAt: candidate.observedAt,
       status: hasProvenance(candidate) ? 'NORMALIZED' : 'RAW',
-      priceComponents: candidate.priceComponents,
+      priceComponents: {
+        ...candidate.priceComponents,
+        ...(assessment ? {
+          hardAttributeDisposition: assessment.decision,
+          hardAttributeScore: assessment.score,
+          hardAttributeConflicts: assessment.conflicts,
+        } : {}),
+      },
       sourceId: candidate.sourceId,
       capturedAt: candidate.capturedAt,
       lineage: [...candidate.lineage, candidateIdOf(candidate)],
@@ -222,6 +306,7 @@ export async function promoteCandidates(
   // and is reported as an explicit guard error instead.
   for (const candidate of candidates) {
     if (!isPricedCandidate(candidate) || !isParsedOrPending(candidate)) continue;
+    if (quarantinedIds.has(candidateIdOf(candidate))) continue;
     const key = promotionKey(candidate);
     if (keys.has(key)) continue;
     result.unpromotedPriced.push(candidateIdOf(candidate));
@@ -229,6 +314,7 @@ export async function promoteCandidates(
   const unattempted = candidates.filter((candidate) =>
     isPricedCandidate(candidate)
     && isParsedOrPending(candidate)
+    && !quarantinedIds.has(candidateIdOf(candidate))
     && !keys.has(promotionKey(candidate))
     && !failedKeys.has(promotionKey(candidate)),
   );
