@@ -19,6 +19,19 @@ test('SQL store filters become WHERE clauses with bound parameters', async () =>
   assert.deepEqual([...calls[0].params], ['tcg:719440', 'Example Card']);
 });
 
+test('SQL store serializes plain strings written to JSONB columns', async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const executor = {
+    async query(sql: string, params: readonly unknown[] = []) {
+      calls.push({ sql, params });
+      return { rows: [{}] };
+    },
+  };
+  const store = createSqlStore(executor as unknown as Parameters<typeof createSqlStore>[0]);
+  await store.insert('cards', { name: 'X', identityKey: 'k', facets: 'plain text' });
+  assert.ok([...calls[0].params].includes('"plain text"'));
+});
+
 test('SQL store ignores unknown filter names instead of emitting bad SQL', async () => {
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const executor = {

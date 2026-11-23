@@ -45,6 +45,7 @@ for (const value of Object.values(schema)) {
 interface TableMeta {
   byProperty: Map<string, string>;
   byDbName: Map<string, string>;
+  jsonColumns: Set<string>;
 }
 
 const metaCache = new Map<string, TableMeta>();
@@ -63,11 +64,12 @@ function metaFor(table: string): TableMeta {
   if (cached) return cached;
   const definition = TABLE_REGISTRY[table];
   if (!definition) throw new Error(`Unknown table: ${table}`);
-  const meta: TableMeta = { byProperty: new Map(), byDbName: new Map() };
+  const meta: TableMeta = { byProperty: new Map(), byDbName: new Map(), jsonColumns: new Set() };
   for (const [property, column] of Object.entries(getTableColumns(definition))) {
     const dbName = (column as { name: string }).name;
     meta.byProperty.set(property, dbName);
     meta.byDbName.set(dbName, property);
+    if ((column as { dataType?: string }).dataType === 'json') meta.jsonColumns.add(dbName);
   }
   metaCache.set(table, meta);
   return meta;
@@ -81,9 +83,20 @@ function toDb(table: string, row: Row): Row {
   const meta = metaForOptional(table);
   if (!meta) return { ...row };
   const out: Row = {};
-  for (const [property, value] of Object.entries(row)) {
+  for (const [property, rawValue] of Object.entries(row)) {
     const dbName = meta.byProperty.get(property);
-    if (dbName) out[dbName] = value === undefined ? null : value;
+    if (!dbName) continue;
+    let value = rawValue === undefined ? null : rawValue;
+    // node-postgres passes strings to JSONB as raw text. A plain string that
+    // is not already JSON must be quoted or Postgres rejects the parameter.
+    if (meta.jsonColumns.has(dbName) && typeof value === 'string') {
+      try {
+        JSON.parse(value);
+      } catch {
+        value = JSON.stringify(value);
+      }
+    }
+    out[dbName] = value;
   }
   return out;
 }
