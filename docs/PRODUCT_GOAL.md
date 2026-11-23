@@ -8,6 +8,18 @@ Build Slabswarm into our own first-party trading-card intelligence service. It w
 
 The eventual commercial goal is to sell API access. That comes after the database is trustworthy for our own use.
 
+## Mission (owner direction, 2026-11-23)
+
+Give collectors, traders, hobbyists and retailers one current, provenance-backed view of what a sports card or TCG card is worth. MySlabs is a marketplace for sports cards and comics with active priced offers [83]. Nearmint covers TCG games including Yu-Gi-Oh!, Digimon, Magic: The Gathering and Riftbound [84]. 130point sells collection tracking against recent sales from 8+ marketplaces [85]. Together they confirm the shape of the market we serve: catalog breadth on one side, current prices on the other. We are not copying any of them. We are building the shared evidence layer that makes those numbers comparable and checkable.
+
+## eBay listing protocol
+
+- Browse API searches and retrieves active eBay items; Feed API supplies daily or weekly bulk listing files; Marketplace Insights API supplies sales history but is Limited Release [68].
+- eBay's Buy APIs are intended for approved partners. The documented path is a developer account, minimum requirements, Sandbox integration, an Application Growth Check, then Production [68].
+- Sandbox transactions are mocks and cannot supply real sold prices [80].
+- The API License Agreement requires eBay's express prior written permission to derive average selling price or gross merchandise sold for any eBay category, and to develop pricing tools from Restricted APIs data [67].
+- Our intended use falls inside that clause. No eBay feed is enabled until written permission and Buy API approval are documented. Active listings would be ASKING evidence; sold history would be SOLD evidence; neither may be relabelled.
+
 ## Product thesis
 
 The value is the join, not any single source. A catalog without prices is a list. A price without a source is a guess. A forecast without a score is an opinion. We ship the whole chain or none of it.
@@ -70,3 +82,11 @@ catalogs and products
 ## Decision rule
 
 When sources disagree, preserve both readings with provenance and let deterministic identity rules decide, or send the case to a review queue. Never smooth a conflict into a single invented fact. If a requirement cannot be met from evidence we lawfully hold, state the gap plainly.
+
+Sources:
+[67] https://developer.ebay.com/develop/apis/api-license-agreement — eBay API License Agreement
+[68] https://developer.ebay.com/develop/get-started/get-started-on-a-buying-application — eBay Get Started on a Buying Application
+[80] https://developer.ebay.com/api-docs/static/gs_ebay-rest-getting-started-landing.html
+[83] https://myslabs.com
+[84] https://www.nearmint.ai
+[85] https://130point.com
