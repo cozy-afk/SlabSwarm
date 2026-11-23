@@ -28,8 +28,8 @@ const evidence = [
     id: 'ev-2',
     sourceId: 'tcgapis',
     sourceRecordId: 'tcg:price:1',
-    capturedAt: '2026-11-22T10:01:00.000Z',
-    observedAt: '2026-11-22T10:01:00.000Z',
+    capturedAt: '2026-11-22',
+    observedAt: '2026-11-22',
     checksum: 'def456',
     mimeType: 'application/json',
     rawRef: 'ingest://tcgapis/tcg:price:1/def456',
@@ -69,6 +69,9 @@ test('sync writes evidence, ledger-derived cards and observations to Postgres re
   assert.equal(cards[0].identityKey, 'tcg:card:1');
   assert.equal((cards[0].facets as Record<string, unknown>).gameName, 'Pokemon');
   assert.equal((await repos.evidence.list()).length, 2);
+  const stored = await repos.evidence.list();
+  const dated = stored.find((row) => row.sourceRecordId === 'tcg:price:1');
+  assert.equal(dated?.observedAt, '2026-11-22T00:00:00.000Z');
   assert.equal((await repos.marketObservations.list()).length, 1);
 });
 

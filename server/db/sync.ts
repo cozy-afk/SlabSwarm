@@ -25,6 +25,13 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
+function iso(value: unknown): string | null {
+  const raw = text(value);
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+}
+
 function payloadOf(row: Row): Row {
   const payload = row.parsedPayload;
   return payload && typeof payload === 'object' ? (payload as Row) : {};
@@ -65,8 +72,8 @@ export async function syncLedgerToPostgres(
     const checksum = text(row.checksum);
     const mimeType = text(row.mimeType);
     const rawRef = text(row.rawRef);
-    const capturedAt = text(row.capturedAt);
-    const observedAt = text(row.observedAt);
+    const capturedAt = iso(row.capturedAt);
+    const observedAt = iso(row.observedAt);
     if (!sourceId || !sourceRecordId || !checksum || !mimeType || !rawRef || !capturedAt || !observedAt) {
       report.errors.push(`Evidence ${text(row.id) ?? '(unknown)'} is missing required provenance`);
       continue;
@@ -109,7 +116,7 @@ export async function syncLedgerToPostgres(
     const targetIdentityRef = text(row.targetIdentityRef);
     const basis = text(row.basis);
     const currency = text(row.currency);
-    const observedAt = text(row.observedAt);
+    const observedAt = iso(row.observedAt);
     const amount = row.amount;
     if (!evidenceId || !targetIdentityRef || !basis || !currency || !observedAt ||
         typeof amount !== 'number' || !Number.isFinite(amount)) {
