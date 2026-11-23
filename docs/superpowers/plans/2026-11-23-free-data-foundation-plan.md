@@ -16,6 +16,8 @@ The pasted "zero rows" report is stale. Live check on 2026-11-23: ledger has 147
 
 Free catalog sources are real but differ in shape. Scryfall is public with bulk exports [8]. Pokémon TCG API is public and labels USD and EUR prices by source [1][2]. CardDex offers anonymous reads at 30 req/min and 5,000 req/day, a free key at 100 req/min, daily price history, and a `prices.updated` webhook; its docs say prices are market reference prices, not offers to buy, and require attribution [64]. Cardex advertises a keyless catalog of 196 sets and 20,987 cards at 100 requests/day [65]. Treat all advertised limits as observed documentation, not guarantees.
 
+eBay is the largest marketplace but is a legal gate, not a feed we can simply add. Its API License Agreement requires eBay's express prior written permission to derive average selling price or gross merchandise sold for any eBay category [67]. The Buy APIs, including Marketplace Insights for sold history, are intended for approved partners and require an application review before production use [68]. Our product's core purpose — deriving prices from sold data — sits squarely inside that restriction. Task 8 handles the approval path; no eBay adapter may be wired before written permission exists.
+
 ## Global Constraints
 
 - Raw evidence immutable. Corrections append.
@@ -242,6 +244,31 @@ git commit -m "feat: export canonical data to Parquet and cite lake in report"
 - [ ] **Step 3:** Record findings, cost, licence and a recommendation. Do not wire any feed into production in this task.
 - [ ] **Step 4:** Commit the document.
 
+### Task 8: eBay marketplace access (gated, no production wiring)
+
+**Files:**
+- Create: `docs/research/2026-11-23-ebay-access-review.md`
+
+**Interfaces:**
+- Consumes: the eBay API License Agreement [67] and the Buy API application guide [68].
+- Produces: a written decision on whether we may lawfully ingest eBay sold data for price derivation; a checklist of prerequisites if yes.
+
+- [ ] **Step 1: Record the blocking clause**
+
+Quote the licence clause requiring express prior written permission to derive average selling price or gross merchandise sold for any eBay category [67]. State plainly that our intended use falls inside it.
+
+- [ ] **Step 2: Record the access path**
+
+Summarize from the primary guide: free developer account, keysets for Sandbox and Production, Buy APIs intended for approved partners, application growth check required for restricted APIs in production [68].
+
+- [ ] **Step 3: Define the owner action**
+
+List what the owner must supply before any code is written: registered developer account with business email, accepted licence, keyset, written permission for price derivation, and Buy API approval. Keys go into the server-side secret store through the vault; never into chat, docs or the repo.
+
+- [ ] **Step 4: Commit the review document**
+
+Expected outcome: either "approved, adapter may be planned" or "not approved, no eBay feed". No adapter is implemented in this task either way.
+
 ### Task 7: Integration and verification
 
 - [ ] Merge all lanes; run all test files explicitly and `npx tsc --noEmit`.
@@ -257,3 +284,5 @@ Sources:
 [64] https://carddex.dev/docs — CardDex API docs
 [65] https://cardex-api.dev — Cardex API
 [66] https://poketrace.com/developers — PokeTrace developer overview
+[67] https://developer.ebay.com/develop/apis/api-license-agreement — eBay API License Agreement
+[68] https://developer.ebay.com/develop/get-started/get-started-on-a-buying-application — eBay Get Started on a Buying Application
