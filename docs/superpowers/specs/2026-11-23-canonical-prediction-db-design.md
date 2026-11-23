@@ -58,7 +58,36 @@ Write to Postgres and the JSON graph on every mutation. Least work up front, but
 
 ## Chosen design
 
-Approach B, in five workstreams.
+Approach B, in five workstreams. The catalog taxonomy below is a prerequisite for workstream 1 and is grounded in the research at `docs/research/2026-11-23-catalog-taxonomy-research.md`.
+
+### Catalog taxonomy
+
+One shared catalog, three verticals: `TRADING_CARD_GAME`, `SPORTS_CARD`, `COMIC_BOOK`. Public systems consistently separate identity from printing: TCGGraph gives each set, collector number and language its own id, Scryfall separates `oracle_id` from printing id, and TCGplayer's SKU tuple adds language, printing and condition [6][8][11]. Comics need a further level — W3C identifies an issue by series and volume, issue number and variant description, while keeping volume distinct from start year [30][29].
+
+```text
+Catalog
+  Vertical: TCG | SPORTS_CARD | COMIC_BOOK
+    Property: Pokemon | Yu-Gi-Oh! | Magic | One Piece | NBA | Marvel
+      Set / Series / Volume: Base Set 1999 | 2024 Topps Chrome | Amazing Spider-Man vol 2
+        Card identity / Issue: Charizard 4/102 | LeBron #23 | ASM #300
+          Printing / Variant: 1st-edition holo | refractor | alternate cover
+            Instance / Copy: PSA 10 cert | CGC 9.8 Universal | owner copy
+              Offer / Observation: seller, price, currency, basis, observed_at
+```
+
+Canonical schema additions:
+
+- Add `vertical` and `propertyId` to `games` (renamed conceptually to properties); keep `sets`, `cards`, `printings`, `instances` as the shared spine.
+- An `identifiers` table with scheme, normalized value, raw value and validity. ISBN identifies an edition and format, GTIN identifies a trade item, and vendor IDs stay scheme-scoped [47][48][41].
+- A `grade_certificates` table with issuer, cert, raw label, normalized numeric grade, qualifier and label tier. Sports-card feeds already separate grader, grade and cert [19]; grader-specific population keys and CGC label tiers must stay raw [22][35].
+- An `offers` table separate from catalog facts, carrying seller, price, ISO currency and condition. schema.org keeps Product and Offer distinct and requires explicit price currency [37][38][46].
+- An `entity_links` table connecting card or issue identities to athlete, team, character, creator or publisher entities. Trading Card API models subjects and teams [20]; comics model creators and first appearances [32].
+- Reversible identity decisions: normalization, blocking, two thresholds and a review queue are standard record-linkage practice [56][57]. Our existing deterministic resolver becomes the decision engine; merges are never destructive.
+- Provenance on every catalog value: source, observed_at, captured_at, method, confidence and version. W3C PROV models versions as specializations of a stable entity [49][50].
+
+Vertical-specific required facts live in validated `facets` profiles: TCG requires set code, card number, rarity and finish; sports requires sport, league, team-on-card, season and print run; comics requires publisher, series, volume, issue number as a string, variant description, and both cover date and on-sale date [1][19][27]. Condition and grade remain separate axes [44].
+
+API surface stays one `/api/catalog` with a `vertical` filter and typed facets, not three separate catalogs. Errors use problem+json, rate limits return 429 with Retry-After, and future customer keys identify a project for quota rather than acting as authorization alone [58][59][61][62].
 
 ### 1. Canonical read layer
 
@@ -123,3 +152,32 @@ These were ambiguous in the first draft. The answers below are the builder's cal
 ## What is left to the builder
 
 Implementation sequencing, file-level tasks and test cases go in the implementation plan after design approval.
+
+Sources:
+[1] https://docs.pokemontcg.io/api-reference/sets/set-object — Pokemon TCG API - set object
+[6] https://tcggraph.com/llms-full.txt — TCGGraph complete reference
+[8] https://scryfall.com/docs/api/cards — Scryfall Card Objects
+[11] https://docs.tcgplayer.com/docs/getting-started — TCGplayer API getting started
+[19] https://www.thecardapi.com/docs — The Card API docs
+[20] https://tradingcardapi.com/docs/api/models — Trading Card API data models
+[22] https://docs.gemrate.com/introduction — GemRate API docs
+[27] https://comicvine.gamespot.com/api/documentation — ComicVine API docs
+[29] https://anansi-project.github.io/docs/comicinfo/documentation — Anansi ComicInfo docs
+[30] https://www.w3.org/wiki/WebSchemas/PeriodicalsComics — W3C Periodicals and Comics
+[32] https://comicmeta.org/cbo — Comic Book Ontology
+[35] https://www.qualitycomix.com/guide/how-read-cgc-label — Reading a CGC label
+[37] https://schema.org/Product — schema.org Product
+[38] https://schema.org/Offer — schema.org Offer
+[41] https://schema.org/identifier — schema.org identifier
+[44] https://schema.org/itemCondition — schema.org itemCondition
+[46] https://schema.org/price — schema.org price
+[47] https://www.isbn-international.org/content/what-isbn/10 — International ISBN Agency
+[48] https://www2.gs1.org/standards/id-keys/gtin — GS1 GTIN
+[49] https://www.w3.org/TR/prov-o — W3C PROV-O
+[50] https://www.w3.org/TR/prov-primer — W3C PROV primer
+[56] https://en.wikipedia.org/wiki/Record_linkage — Record linkage
+[57] https://www.zingg.ai/deep-dives/the-what-and-why-of-entity-resolution — Entity resolution pipeline
+[58] https://jsonapi.org/format/1.0 — JSON:API 1.0
+[59] https://www.rfc-editor.org/rfc/rfc9457 — RFC 9457 problem details
+[61] https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429 — HTTP 429 MDN
+[62] https://cloud.google.com/docs/authentication/api-keys — Google API keys
