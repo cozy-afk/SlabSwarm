@@ -16,6 +16,7 @@ import {
   type MatchReviewQueue,
 } from '../../server/identity/qaQueue.ts';
 import { promoteToCanonical } from '../../server/identity/resolver.ts';
+import { seedCanonicalEvidence } from './evidence-fixture.ts';
 import { loadFacts } from '../../server/serving/market.ts';
 
 const NOW = '2026-11-23T00:00:00.000Z';
@@ -128,6 +129,7 @@ test('an arbitrary override string cannot release a quarantined match', async ()
 
 test('a corroborated title promotes normally and records its hard-attribute provenance', async () => {
   const repos = createRepositories(createMemoryStore());
+  await seedCanonicalEvidence(repos, 'marketplace', 'listing-1');
   const report = await promoteToCanonical(corroborated(repos));
 
   assert.equal(report.accepted, true, report.reasons.join('; '));
@@ -248,6 +250,7 @@ test('the QA queue only accepts quarantined matches and records append-only corr
 
 test('QA approval is the only release path and writes one audited canonical observation', async () => {
   const repos = createRepositories(createMemoryStore());
+  await seedCanonicalEvidence(repos, 'marketplace', 'listing-1');
   const qa = createMatchReviewQueue({ repositories: repos, now: () => new Date(NOW), floor: 0.75 });
   const queued = await qa.enqueue(quarantined(repos));
 

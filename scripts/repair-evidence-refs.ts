@@ -35,6 +35,8 @@ export interface RepairChange {
   to: string;
   sourceId: string;
   sourceRecordId: string;
+  /** Exact matching key used: source+sourceRecordId+checksum or source+sourceRecordId. */
+  matchedBy?: string;
 }
 
 export interface RepairReport {
@@ -163,35 +165,62 @@ export async function repairEvidenceRefs(options: RepairOptions): Promise<Repair
     const ledgerRow = [...candidates][0]!;
     const sourceId = text(ledgerRow.sourceId);
     const sourceRecordId = text(ledgerRow.sourceRecordId);
-    const checksum = text(ledgerRow.checksum);
-    if (!sourceId || !sourceRecordId || !checksum) {
+    if (!sourceId || !sourceRecordId) {
       report.failures.push({
         observationId,
         evidenceId: citedId,
-        reason: 'ledger evidence lacks exact sourceId + sourceRecordId + checksum provenance',
+        reason: 'ledger evidence lacks exact sourceId + sourceRecordId provenance',
       });
       continue;
     }
-    let matches: Awaited<ReturnType<Repositories['evidence']['list']>>;
+    const checksum = text(ledgerRow.checksum);
+    let matches: Awaited<ReturnType<Repositories['evidence']['list']>> | null = null;
+    let matchedBy = '';
     try {
-      matches = await options.repositories.evidence.list({ sourceId, sourceRecordId, checksum });
+      if (checksum) {
+        const exact = await options.repositories.evidence.list({ sourceId, sourceRecordId, checksum });
+        if (exact.length > 1) {
+          report.failures.push({
+            observationId,
+            evidenceId: citedId,
+            reason: `ambiguous canonical evidence for source=${sourceId} sourceRecordId=${sourceRecordId} checksum=${checksum} (found ${exact.length})`,
+          });
+          continue;
+        }
+        if (exact.length === 1) {
+          matches = exact;
+          matchedBy = 'source+sourceRecordId+checksum';
+        }
+      }
+      // Fallback permitted by the plan: exact source + sourceRecordId when the
+      // checksum is absent or does not identify a single row. Accepted only
+      // when exactly one canonical row matches; never guessed.
+      if (!matches) {
+        const bySourceRecord = await options.repositories.evidence.list({ sourceId, sourceRecordId });
+        if (bySourceRecord.length !== 1) {
+          report.failures.push({
+            observationId,
+            evidenceId: citedId,
+            reason: bySourceRecord.length === 0
+              ? `no canonical evidence row for source=${sourceId} sourceRecordId=${sourceRecordId}`
+              : `ambiguous canonical evidence for source=${sourceId} sourceRecordId=${sourceRecordId} (found ${bySourceRecord.length}); refusing to guess`,
+          });
+          continue;
+        }
+        matches = bySourceRecord;
+        matchedBy = 'source+sourceRecordId';
+      }
     } catch (error) {
       report.errors.push(`Evidence lookup for ${sourceId}:${sourceRecordId}: ${error instanceof Error ? error.message : String(error)}`);
-      continue;
-    }
-    if (matches.length !== 1) {
-      report.failures.push({
-        observationId,
-        evidenceId: citedId,
-        reason: `no unique canonical evidence row for source=${sourceId} sourceRecordId=${sourceRecordId} checksum=${checksum} (found ${matches.length})`,
-      });
       continue;
     }
     const canonicalId = matches[0]!.id;
     if (apply) {
       try {
         await (options.updateEvidenceRef ?? updateCanonicalEvidenceRef)(observationId, canonicalId);
-        report.repairs.push({ observationId, from: citedId, to: canonicalId, sourceId, sourceRecordId });
+        report.repairs.push({
+          observationId, from: citedId, to: canonicalId, sourceId, sourceRecordId, matchedBy,
+        });
         report.repaired += 1;
       } catch (error) {
         report.errors.push(`Update ${observationId}: ${error instanceof Error ? error.message : String(error)}`);

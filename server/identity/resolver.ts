@@ -419,6 +419,58 @@ export async function resolveCandidate(candidate: FreeFeedRecord): Promise<Ident
   };
 }
 
+/**
+ * Resolve the observation's evidence reference at the persistence boundary.
+ * Every caller (harvest shim, QA re-approval, direct callers) goes through
+ * this path. Only exact canonical rows are accepted: a verified supplied id,
+ * an already-canonical reference, an exact sourceId+sourceRecordId match, or
+ * an exact sourceId+parsedPayload.record.externalId match. A missing or
+ * ambiguous match fails closed rather than writing a synthetic id.
+ */
+type EvidenceResolution = { id: string } | { reason: string };
+
+async function resolveCanonicalEvidenceId(
+  proposal: Proposal,
+  repos: Repositories,
+): Promise<EvidenceResolution> {
+  const supplied = text(proposal.canonicalEvidenceId);
+  if (supplied !== UNKNOWN) {
+    const found = await repos.evidence.get(supplied);
+    return found
+      ? { id: found.id }
+      : { reason: `supplied canonical evidence ${supplied} does not exist` };
+  }
+  const direct = await repos.evidence.get(evidenceIdOf(proposal));
+  if (direct) return { id: direct.id };
+
+  const sourceId = text(proposal.sourceId);
+  const externalId = text(proposal.externalId);
+  if (sourceId === UNKNOWN || externalId === UNKNOWN) {
+    return { reason: 'cannot resolve canonical evidence without sourceId and externalId' };
+  }
+  const byRecordId = await repos.evidence.list({ sourceId, sourceRecordId: externalId });
+  if (byRecordId.length === 1) return { id: byRecordId[0]!.id };
+  if (byRecordId.length > 1) {
+    return { reason: `ambiguous canonical evidence for ${sourceId}:${externalId} (${byRecordId.length} rows)` };
+  }
+  const bySource = await repos.evidence.list({ sourceId });
+  const byExternalId = bySource.filter((row) => {
+    const payload = row.parsedPayload;
+    const record = payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>).record
+      : null;
+    return record !== null && typeof record === 'object'
+      && text((record as Record<string, unknown>).externalId) === externalId;
+  });
+  if (byExternalId.length === 1) return { id: byExternalId[0]!.id };
+  if (byExternalId.length > 1) {
+    return { reason: `ambiguous canonical evidence for ${sourceId} externalId=${externalId} (${byExternalId.length} rows)` };
+  }
+  return {
+    reason: `no canonical evidence row matches exact provenance sourceId=${sourceId} externalId=${externalId}`,
+  };
+}
+
 /** Validate provenance, then run every canonical write in one transaction.
  * `accepted` is true only when the card, aliases, decision row and (for a
  * priced proposal) the observation all committed; any failure rolls the whole
@@ -432,9 +484,8 @@ export async function promoteToCanonical(
   const evidenceId = evidenceIdOf(proposal);
   // Referential integrity: an observation may only cite a canonical evidence
   // row. Identity keys and aliases keep the source-scoped `evidenceId`; only
-  // the observation reference is promoted to the Postgres evidence id.
-  const suppliedEvidenceId = text(proposal.canonicalEvidenceId);
-  const observationEvidenceId = suppliedEvidenceId === UNKNOWN ? evidenceId : suppliedEvidenceId;
+  // the observation reference is promoted to the Postgres evidence id, which
+  // is resolved from exact provenance inside the transaction below.
   const report: CanonicalWriteReport = {
     accepted: false,
     evidenceId,
@@ -522,6 +573,16 @@ export async function promoteToCanonical(
       );
       report.decision = decision;
 
+      // Fail closed before any write: an observation may only cite a
+      // canonical evidence row, resolved by exact provenance for every caller.
+      const resolution = await resolveCanonicalEvidenceId(proposal, tx);
+      if ('reason' in resolution) {
+        const reason = `canonical evidence unresolved: ${resolution.reason}`;
+        report.reasons.push(reason);
+        throw new Error(reason);
+      }
+      const observationEvidenceId = resolution.id;
+
       let card: Card | null = null;
       let observation: MarketObservation | null = null;
       const aliases: AliasRow[] = [];
@@ -572,15 +633,6 @@ export async function promoteToCanonical(
           source: 'identity-resolver',
           confidence: CONFIDENCE_SCORE[decision.confidence],
         }));
-      }
-
-      if (suppliedEvidenceId !== UNKNOWN) {
-        // A supplied canonical id must exist in this repository; never fall
-        // back to a synthetic id and present an orphan as evidence-backed.
-        const canonicalEvidence = await tx.evidence.get(observationEvidenceId);
-        if (!canonicalEvidence) {
-          throw new Error(`canonical evidence ${observationEvidenceId} does not exist`);
-        }
       }
 
       if (hasPrice) {

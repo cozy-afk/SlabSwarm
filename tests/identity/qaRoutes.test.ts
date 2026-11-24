@@ -17,6 +17,7 @@ import {
   createMatchReviewRouter,
   mountMatchReviewRouter,
 } from '../../server/identity/qaRoutes.ts';
+import { seedCanonicalEvidence } from './evidence-fixture.ts';
 
 const NOW = '2026-11-23T00:00:00.000Z';
 const OBSERVED = '2026-11-22T10:00:00.000Z';
@@ -147,6 +148,7 @@ test('queue filtering, corrections and review errors use plain error envelopes',
 });
 
 test('POST /api/qa/match-review APPROVE publishes one provenance-carrying correction', async () => {
+  await seedCanonicalEvidence(repos, 'marketplace', 'approve-1');
   await post('/api/qa/match-queue', proposal({ externalId: 'approve-1', title: 'Charizard #4 PSA 10 cert #87654321' }));
   const queue = await get('/api/qa/match-queue?status=PENDING');
   assert.equal(queue.body.data.counts.PENDING, 1);

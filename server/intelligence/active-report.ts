@@ -77,6 +77,7 @@ export interface ActiveReportMeta {
     findingCount: number;
     cardCount: number;
     unresolvedEvidenceRefCount: number;
+    excludedObservationCount: number;
   };
   /** Unresolved evidence ids excluded from `cards[].evidence` with a warning. */
   evidenceWarnings: string[];
@@ -250,11 +251,27 @@ export async function buildActiveReport(
   ]);
   const evidenceById = new Map(evidenceRows.map((record) => [record.id, record]));
   const unresolvedEvidenceRefs = new Set<string>();
+  const excludedObservationRefs: string[] = [];
+  for (const observation of observations) {
+    const id = observation.evidenceId;
+    if (typeof id === 'string' && id.trim() !== '' && !evidenceById.has(id)) {
+      unresolvedEvidenceRefs.add(id);
+      excludedObservationRefs.push(id);
+    }
+  }
+  // Orphan-backed observations are excluded from EVERY reported figure —
+  // price bands, drivers, invalidators and insufficientEvidence. Until the
+  // refs are repaired they are not evidence-backed, so they must not shape a
+  // card that looks evidence-backed.
+  const usableObservations = observations.filter(
+    (observation) => typeof observation.evidenceId === 'string'
+      && evidenceById.has(observation.evidenceId),
+  );
 
   // Phase 3: re-run the deterministic discovery sweep over the exact same
   // first-party evidence that feeds this report. No LLM, no network, no writes
   // to the ingest store (findings land in a throwaway analytics store).
-  const analyticsStore = createAnalyticsStore({ evidence: evidenceRows, observations });
+  const analyticsStore = createAnalyticsStore({ evidence: evidenceRows, observations: usableObservations });
   const sweep = runDiscoverySweep(analyticsStore, {
     now, activeWindowDays, staleDays, minActiveObservations,
   });
@@ -268,7 +285,7 @@ export async function buildActiveReport(
   }
 
   const byTarget = new Map<string, MarketObservation[]>();
-  for (const observation of observations) {
+  for (const observation of usableObservations) {
     const resolved = observationTargetRef(observation);
     const target = resolved === 'unresolved' ? UNKNOWN : resolved;
     const bucket = byTarget.get(target);
@@ -358,28 +375,36 @@ export async function buildActiveReport(
   );
   const rankedCards = cards.slice(0, limit);
 
-  const timestamps = observations
+  const timestamps = usableObservations
     .map((observation) => validTimestamp(observation.observedAt))
     .filter((value): value is string => value !== null)
     .sort();
 
   const summary = {
     totalEvidence: evidenceRows.length,
-    totalObservations: observations.length,
+    totalObservations: usableObservations.length,
     cardsObserved: rankedCards.length,
     insufficientEvidence:
-      observations.length === 0 || rankedCards.every((card) => card.priceBand === UNKNOWN),
+      usableObservations.length === 0 || rankedCards.every((card) => card.priceBand === UNKNOWN),
     oldestObservationAt: timestamps[0] ?? UNKNOWN,
     newestObservationAt: timestamps[timestamps.length - 1] ?? UNKNOWN,
   };
 
   const unresolved = [...unresolvedEvidenceRefs].sort();
-  const evidenceWarnings = unresolved.length === 0
-    ? []
-    : [
+  const evidenceWarnings: string[] = [];
+  if (unresolved.length > 0) {
+    evidenceWarnings.push(
       `Excluded ${unresolved.length} unresolved evidence ref(s) from report evidence; `
         + `they are not evidence-backed: ${unresolved.join(', ')}`,
-    ];
+    );
+  }
+  if (excludedObservationRefs.length > 0) {
+    evidenceWarnings.push(
+      `Excluded ${excludedObservationRefs.length} observation(s) from report figures `
+        + `(price bands, drivers, invalidators, summary) because their evidence refs are `
+        + `unresolved; they are not evidence-backed: ${[...new Set(excludedObservationRefs)].sort().join(', ')}`,
+    );
+  }
 
   return {
     data: {
@@ -398,6 +423,7 @@ export async function buildActiveReport(
         findingCount: findings.length,
         cardCount: rankedCards.length,
         unresolvedEvidenceRefCount: unresolved.length,
+        excludedObservationCount: excludedObservationRefs.length,
       },
       evidenceWarnings,
       lakeManifest,

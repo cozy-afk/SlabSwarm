@@ -93,6 +93,32 @@ test('promoted observation cites an evidence_records id, not the ledger id', asy
   assert.equal(evidence.checksum, CHECKSUM);
 });
 
+test('synced observation with a sourceId:externalId ref maps by exact provenance', async () => {
+  const repos = createRepositories(createMemoryStore());
+  const report = await syncLedgerToPostgres(repos, {
+    evidence: [{ ...ledgerEvidence } as unknown as Record<string, unknown>],
+    observations: [{
+      id: 'obs-synthetic-ref',
+      evidenceId: 'tcgapis:530626',
+      targetIdentityRef: 'card-charizard',
+      basis: 'GUIDE',
+      amount: 12.5,
+      currency: 'USD',
+      observedAt: OBSERVED_AT,
+      status: 'NORMALIZED',
+    }],
+  });
+  assert.deepEqual(report.errors, []);
+  assert.equal(report.observations, 1);
+
+  const observations = await repos.marketObservations.list();
+  assert.equal(observations.length, 1);
+  const evidence = await repos.evidence.get(observations[0]!.evidenceId);
+  assert.ok(evidence, `synthetic ref was not mapped: ${observations[0]!.evidenceId}`);
+  assert.equal(evidence.sourceRecordId, SOURCE_RECORD_ID);
+  assert.equal(evidence.checksum, CHECKSUM);
+});
+
 test('synced observation cites the canonical evidence row matched by source and sourceRecordId', async () => {
   const repos = createRepositories(createMemoryStore());
   const report = await syncLedgerToPostgres(repos, {

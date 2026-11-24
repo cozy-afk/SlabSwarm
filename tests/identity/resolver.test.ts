@@ -16,6 +16,7 @@ import {
   promoteToCanonical,
   resolveCandidate,
 } from '../../server/identity/resolver.ts';
+import { seedCanonicalEvidence } from './evidence-fixture.ts';
 
 const OBSERVED_AT = '2026-11-22T10:00:00.000Z';
 const CAPTURED_AT = '2026-11-23T09:00:00.000Z';
@@ -84,6 +85,8 @@ function targetOf(row: { targetIdentityRef?: string; targetIdentityId?: string }
 
 test('two sources naming the same card produce one canonical identity', async () => {
   const repos = fixture();
+  await seedCanonicalEvidence(repos, 'scryfall', 's-1');
+  await seedCanonicalEvidence(repos, 'pokemontcg', 'p-1');
   const a = proposal({ sourceId: 'scryfall', externalId: 's-1' }, repos);
   const b = proposal({ sourceId: 'pokemontcg', externalId: 'p-1' }, repos);
 
@@ -106,11 +109,12 @@ test('two sources naming the same card produce one canonical identity', async ()
   assert.equal(cards.length, 1);
   const observations = await repos.marketObservations.list();
   assert.equal(observations.length, 2);
-  assert.ok(observations.every((row) => targetOf(row) === da.canonicalId));
-  assert.deepEqual(
-    observations.map((row) => row.evidenceId).sort(),
-    ['pokemontcg:p-1', 'scryfall:s-1'],
+  assert.ok(
+    observations.every((row) => targetOf(row) === da.canonicalId),
   );
+  const cited = await Promise.all(observations.map((row) => repos.evidence.get(row.evidenceId)));
+  assert.ok(cited.every((record) => record !== null), 'both observations cite resolvable evidence');
+  assert.deepEqual(cited.map((record) => record!.sourceId).sort(), ['pokemontcg', 'scryfall']);
 
   // Deterministic tie-break: an alias to a lower-trust external card must
   // never displace the first-party survivor.
@@ -149,6 +153,9 @@ test('a missing set or number stays UNKNOWN and does not merge', async () => {
     sourceId: 'pokemontcg', externalId: 'p-5', set: 'UNKNOWN', number: 'UNKNOWN',
   }, repos);
   const all = [known, noNumber, noSet, neither, neitherAgain];
+  for (const candidate of all) {
+    await seedCanonicalEvidence(repos, candidate.sourceId, candidate.externalId);
+  }
 
   const decisions = [];
   for (const candidate of all) decisions.push(await resolveCandidate(candidate));
@@ -182,6 +189,7 @@ test('a missing set or number stays UNKNOWN and does not merge', async () => {
 
 test('GUIDE amount stays GUIDE/USD and is never relabelled SOLD', async () => {
   const repos = fixture();
+  await seedCanonicalEvidence(repos, 'pokemontcg', 'p-1');
   const guide = proposal({
     sourceId: 'pokemontcg',
     externalId: 'p-1',
@@ -230,6 +238,8 @@ test('a candidate missing provenance is rejected without any canonical write', a
 
 test('a merge is reversible: the original identity survives and an identity_decisions row is recorded', async () => {
   const repos = fixture();
+  await seedCanonicalEvidence(repos, 'scryfall', 's-1');
+  await seedCanonicalEvidence(repos, 'pokemontcg', 'p-1');
   const first = proposal({ sourceId: 'scryfall', externalId: 's-1' }, repos);
   const firstReport = await promoteToCanonical(first);
   assert.equal(firstReport.accepted, true);
@@ -293,6 +303,7 @@ test('a failed observation write is rejected with promotion errors and no partia
     transaction: async <T>(fn: (tx: Repositories) => Promise<T>): Promise<T> =>
       store.transaction(() => fn(failing)),
   };
+  await seedCanonicalEvidence(failing, 'scryfall', 's-1');
 
   const report = await promoteToCanonical(proposal({}, failing));
   assert.equal(report.accepted, false);
@@ -317,6 +328,8 @@ test('a failed observation write is rejected with promotion errors and no partia
 test('a failing decision repository rolls back the whole merge and reports no partial commit', async () => {
   const store = createMemoryStore();
   const repos = createRepositories(store);
+  await seedCanonicalEvidence(repos, 'scryfall', 's-1');
+  await seedCanonicalEvidence(repos, 'pokemontcg', 'p-1');
   const first = await promoteToCanonical(proposal({ sourceId: 'scryfall', externalId: 's-1' }, repos));
   assert.equal(first.accepted, true);
   const before = {
