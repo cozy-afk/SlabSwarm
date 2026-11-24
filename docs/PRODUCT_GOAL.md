@@ -2,9 +2,11 @@
 
 Status: binding. Owner confirmed 2026-11-23.
 
-## Active execution goal (owner instruction, 2026-11-23)
+## Active execution goal (owner instruction, 2026-11-24)
 
-Keep the product working end to end, not merely buildable. In each operating cycle: harvest and log cards from allowlisted free sources; promote them to canonical identities; price them from SOLD / GUIDE / ASKING evidence without relabelling; run an evidence-first research cycle; record the run; and verify the result through the live API and Postgres. If any step fails, debug it methodically, add a failing test first, fix the cause, run the full suite, deploy, and re-run the cycle. A cycle is complete only when real card rows, real evidence rows, real price observations, a stored research run with cited evidence IDs and an evidence-backed active report are all readable from the canonical store. Never invent a card, a price, a sale or a research claim to make the pipeline look healthy. Gated sources remain gaps and are reported as such.
+Research and implement Option A: rebuild Slabswarm around canonical card UUIDs with source crosswalks, so people can search and read cards by name, set, number and game while machines keep stable identity. Bind every later operating cycle to this model: harvest and log cards from allowlisted free sources; resolve source refs into crosswalks; keep canonical card UUIDs in observations, valuations, forecasts, research notes and reports; price from SOLD / GUIDE / ASKING evidence without relabelling; run evidence-first research; record the run; and verify through the live API and Postgres.
+
+Completely human proof means every claim in the goal is checkable by a human running plain SQL or curl commands and reading recorded output. Each cycle must produce or update `docs/proofs/2026-11-24-canonical-identity.md` with before/after counts, zero unresolved identity and evidence references, a real name-search result showing UUID plus human fields, a real report result, research and forecast outputs tied to canonical identities, reference-only TCGAPIs rows excluded from first-party ranking, full suite result and deploy result. If any check fails, debug methodically: failing test first, root cause, minimal fix, scoped review, full suite, deploy, rerun the proof. Never invent a card, price, sale, name, set, game or research claim to make a metric look healthy. TCGAPIs stays a schema/API reference only; gated eBay, PSA and paid sources stay documented gaps, not invented data.
 
 ## Purpose
 
