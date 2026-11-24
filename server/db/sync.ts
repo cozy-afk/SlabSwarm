@@ -59,12 +59,34 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Exact references a ledger evidence row may be cited by. No guessing. */
+function ledgerRefsOf(row: Row): string[] {
+  const refs = new Set<string>();
+  const id = text(row.id);
+  const sourceId = text(row.sourceId);
+  const sourceRecordId = text(row.sourceRecordId);
+  if (id) refs.add(id);
+  if (sourceId && sourceRecordId) refs.add(`${sourceId}:${sourceRecordId}`);
+  const payload = payloadOf(row);
+  const record = payload.record;
+  const externalId = record && typeof record === 'object'
+    ? text((record as Row).externalId)
+    : null;
+  if (sourceId && externalId) refs.add(`${sourceId}:${externalId}`);
+  return [...refs];
+}
+
 export async function syncLedgerToPostgres(
   repos: Repositories,
   snapshot: SyncSnapshot,
 ): Promise<SyncReport> {
   const report: SyncReport = { evidence: 0, cards: 0, observations: 0, errors: [] };
   const cardKeys = new Set<string>();
+  // Ledger -> canonical id map. Both sides carry the same immutable
+  // provenance triple, so the mapping is exact rather than guessed. Keys cover
+  // the ledger id and the exact sourceId:sourceRecordId / sourceId:externalId
+  // refs used by synthetic observation citations.
+  const canonicalIdsByRef = new Map<string, string[]>();
 
   for (const row of snapshot.evidence ?? []) {
     const sourceId = text(row.sourceId);
@@ -80,21 +102,28 @@ export async function syncLedgerToPostgres(
     }
     try {
       const existing = await repos.evidence.list({ sourceId, sourceRecordId, checksum });
-      if (existing.length === 0) {
-        await repos.evidence.create({
-          id: text(row.id) ?? undefined,
-          sourceId,
-          sourceRecordId,
-          sourceUri: text(row.sourceUri) ?? null,
-          capturedAt,
-          observedAt,
-          checksum,
-          mimeType,
-          license: text(row.license) ?? null,
-          rawRef,
-          parsedPayload: payloadOf(row),
-          trustTier: (text(row.trustTier) as 'UNKNOWN' | 'LOW' | 'MEDIUM' | 'HIGH' | undefined) ?? undefined,
-        } as Parameters<Repositories['evidence']['create']>[0]);
+      if (existing.length > 1) {
+        report.errors.push(`Evidence ${text(row.id) ?? '(unknown)'} has ambiguous canonical matches`);
+        continue;
+      }
+      const canonical = existing[0] ?? await repos.evidence.create({
+        id: text(row.id) ?? undefined,
+        sourceId,
+        sourceRecordId,
+        sourceUri: text(row.sourceUri) ?? null,
+        capturedAt,
+        observedAt,
+        checksum,
+        mimeType,
+        license: text(row.license) ?? null,
+        rawRef,
+        parsedPayload: payloadOf(row),
+        trustTier: (text(row.trustTier) as 'UNKNOWN' | 'LOW' | 'MEDIUM' | 'HIGH' | undefined) ?? undefined,
+      } as Parameters<Repositories['evidence']['create']>[0]);
+      for (const ref of ledgerRefsOf(row)) {
+        const bucket = canonicalIdsByRef.get(ref);
+        if (!bucket) canonicalIdsByRef.set(ref, [canonical.id]);
+        else if (!bucket.includes(canonical.id)) bucket.push(canonical.id);
       }
       report.evidence += 1;
     } catch (error) {
@@ -132,16 +161,36 @@ export async function syncLedgerToPostgres(
       report.errors.push(`Observation ${text(row.id) ?? '(unknown)'} is missing required provenance`);
       continue;
     }
+    // Translate the ledger-side reference to the canonical evidence_records
+    // id. An unresolvable ref is reported and never written as evidence-backed.
+    const mapped = canonicalIdsByRef.get(evidenceId) ?? [];
+    let canonicalEvidenceId = mapped.length === 1 ? mapped[0]! : null;
+    if (!canonicalEvidenceId && mapped.length > 1) {
+      report.errors.push(
+        `Observation ${text(row.id) ?? evidenceId} cites ambiguous evidence ref ${evidenceId} (${mapped.length} canonical rows)`,
+      );
+      continue;
+    }
+    if (!canonicalEvidenceId) {
+      const direct = await repos.evidence.get(evidenceId);
+      if (direct) canonicalEvidenceId = direct.id;
+    }
+    if (!canonicalEvidenceId) {
+      report.errors.push(
+        `Observation ${text(row.id) ?? evidenceId} cites unresolved evidence id ${evidenceId}`,
+      );
+      continue;
+    }
     try {
       const existing = await repos.marketObservations.list({
-        evidenceId,
+        evidenceId: canonicalEvidenceId,
         targetIdentityId: targetIdentityRef,
         basis,
         observedAt,
       });
       if (existing.length === 0) {
         await repos.marketObservations.create({
-          evidenceId,
+          evidenceId: canonicalEvidenceId,
           targetIdentityRef,
           basis: basis as Parameters<Repositories['marketObservations']['create']>[0]['basis'],
           amount,

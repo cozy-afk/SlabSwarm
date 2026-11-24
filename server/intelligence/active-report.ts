@@ -76,7 +76,11 @@ export interface ActiveReportMeta {
     targetCount: number;
     findingCount: number;
     cardCount: number;
+    unresolvedEvidenceRefCount: number;
+    excludedObservationCount: number;
   };
+  /** Unresolved evidence ids excluded from `cards[].evidence` with a warning. */
+  evidenceWarnings: string[];
   /** Last successful Parquet export, or the literal UNKNOWN when none exists. */
   lakeManifest: ParquetExportResult | typeof UNKNOWN;
 }
@@ -196,6 +200,7 @@ function bandOf(
 function evidenceRefsOf(
   observations: MarketObservation[],
   evidenceById: Map<string, EvidenceRecord>,
+  unresolved: Set<string>,
 ): EvidenceRef[] {
   const refs = new Map<string, EvidenceRef>();
   for (const observation of observations) {
@@ -204,9 +209,13 @@ function evidenceRefsOf(
       : null;
     if (!id || refs.has(id)) continue;
     const evidence = evidenceById.get(id);
-    const source = asText(evidence
-      ? (evidence as unknown as Record<string, unknown>).sourceId
-      : observation.marketplace);
+    // Never present an unresolved id as evidence-backed. Record it for the
+    // caller to reject explicitly instead of emitting a misleading ref.
+    if (!evidence) {
+      unresolved.add(id);
+      continue;
+    }
+    const source = asText(evidence.sourceId);
     const observedAt = validTimestamp(observation.observedAt) ??
       validTimestamp(evidence?.observedAt) ??
       UNKNOWN;
@@ -241,11 +250,28 @@ export async function buildActiveReport(
     repositories.marketObservations.list(),
   ]);
   const evidenceById = new Map(evidenceRows.map((record) => [record.id, record]));
+  const unresolvedEvidenceRefs = new Set<string>();
+  const excludedObservationRefs: string[] = [];
+  for (const observation of observations) {
+    const id = observation.evidenceId;
+    if (typeof id === 'string' && id.trim() !== '' && !evidenceById.has(id)) {
+      unresolvedEvidenceRefs.add(id);
+      excludedObservationRefs.push(id);
+    }
+  }
+  // Orphan-backed observations are excluded from EVERY reported figure —
+  // price bands, drivers, invalidators and insufficientEvidence. Until the
+  // refs are repaired they are not evidence-backed, so they must not shape a
+  // card that looks evidence-backed.
+  const usableObservations = observations.filter(
+    (observation) => typeof observation.evidenceId === 'string'
+      && evidenceById.has(observation.evidenceId),
+  );
 
   // Phase 3: re-run the deterministic discovery sweep over the exact same
   // first-party evidence that feeds this report. No LLM, no network, no writes
   // to the ingest store (findings land in a throwaway analytics store).
-  const analyticsStore = createAnalyticsStore({ evidence: evidenceRows, observations });
+  const analyticsStore = createAnalyticsStore({ evidence: evidenceRows, observations: usableObservations });
   const sweep = runDiscoverySweep(analyticsStore, {
     now, activeWindowDays, staleDays, minActiveObservations,
   });
@@ -259,7 +285,7 @@ export async function buildActiveReport(
   }
 
   const byTarget = new Map<string, MarketObservation[]>();
-  for (const observation of observations) {
+  for (const observation of usableObservations) {
     const resolved = observationTargetRef(observation);
     const target = resolved === 'unresolved' ? UNKNOWN : resolved;
     const bucket = byTarget.get(target);
@@ -335,7 +361,7 @@ export async function buildActiveReport(
       priceBand,
       drivers,
       invalidators,
-      evidence: evidenceRefsOf(ordered, evidenceById),
+      evidence: evidenceRefsOf(ordered, evidenceById, unresolvedEvidenceRefs),
       confidence: confidenceOf(targetFindings),
       freshness: freshnessOf(lastObservedAt, now, staleDays),
     });
@@ -349,20 +375,36 @@ export async function buildActiveReport(
   );
   const rankedCards = cards.slice(0, limit);
 
-  const timestamps = observations
+  const timestamps = usableObservations
     .map((observation) => validTimestamp(observation.observedAt))
     .filter((value): value is string => value !== null)
     .sort();
 
   const summary = {
     totalEvidence: evidenceRows.length,
-    totalObservations: observations.length,
+    totalObservations: usableObservations.length,
     cardsObserved: rankedCards.length,
     insufficientEvidence:
-      observations.length === 0 || rankedCards.every((card) => card.priceBand === UNKNOWN),
+      usableObservations.length === 0 || rankedCards.every((card) => card.priceBand === UNKNOWN),
     oldestObservationAt: timestamps[0] ?? UNKNOWN,
     newestObservationAt: timestamps[timestamps.length - 1] ?? UNKNOWN,
   };
+
+  const unresolved = [...unresolvedEvidenceRefs].sort();
+  const evidenceWarnings: string[] = [];
+  if (unresolved.length > 0) {
+    evidenceWarnings.push(
+      `Excluded ${unresolved.length} unresolved evidence ref(s) from report evidence; `
+        + `they are not evidence-backed: ${unresolved.join(', ')}`,
+    );
+  }
+  if (excludedObservationRefs.length > 0) {
+    evidenceWarnings.push(
+      `Excluded ${excludedObservationRefs.length} observation(s) from report figures `
+        + `(price bands, drivers, invalidators, summary) because their evidence refs are `
+        + `unresolved; they are not evidence-backed: ${[...new Set(excludedObservationRefs)].sort().join(', ')}`,
+    );
+  }
 
   return {
     data: {
@@ -380,7 +422,10 @@ export async function buildActiveReport(
         targetCount: byTarget.size,
         findingCount: findings.length,
         cardCount: rankedCards.length,
+        unresolvedEvidenceRefCount: unresolved.length,
+        excludedObservationCount: excludedObservationRefs.length,
       },
+      evidenceWarnings,
       lakeManifest,
     },
   };

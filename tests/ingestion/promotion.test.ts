@@ -205,11 +205,24 @@ test('POST /api/ingest/promote returns counts and writes observations', async ()
 
 test('promoted observations feed a basis-safe active report', async () => {
   const repos = createInMemoryRepositories();
-  await store(repos, [
-    candidate({ evidenceId: 'ev-a', amount: 10, targetIdentityRef: 'tcg:card-a' }),
-    candidate({ evidenceId: 'ev-b', amount: 20, targetIdentityRef: 'tcg:card-a' }),
-    candidate({ evidenceId: 'ev-c', amount: 30, targetIdentityRef: 'tcg:card-a' }),
-  ]);
+  // A report ref is only cited when it resolves in the evidence ledger; seed
+  // the three immutable evidence rows that back these candidates.
+  const amounts = [10, 20, 30];
+  const priced = [];
+  for (const amount of amounts) {
+    const evidence = await repos.evidence.create({
+      sourceId: 'tcgapis',
+      sourceRecordId: `tcg:price:card-a:${amount}`,
+      capturedAt: CAPTURED_AT,
+      observedAt: OBSERVED_AT,
+      checksum: `sha256-card-a-${amount}`,
+      mimeType: 'application/json',
+      rawRef: `ingest://tcgapis/tcg:price:card-a:${amount}`,
+      parsedPayload: { name: 'Card A' },
+    });
+    priced.push(candidate({ evidenceId: evidence.id, amount, targetIdentityRef: 'tcg:card-a' }));
+  }
+  await store(repos, priced);
   const result = await promoteCandidates(repos, { now: NOW });
   assert.equal(result.promoted, 3);
 

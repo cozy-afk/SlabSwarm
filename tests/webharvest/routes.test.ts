@@ -8,6 +8,7 @@ import { createRepositories } from '../../server/db/repositories/index.ts';
 import { createMemoryStore } from '../../server/db/store.ts';
 import { createWebHarvestStore } from '../../server/webharvest/store.ts';
 import { mountWebHarvestRouter } from '../../server/webharvest/routes.ts';
+import { seedCanonicalEvidence } from '../identity/evidence-fixture.ts';
 
 const SOURCE = {
   id: 'route-source',
@@ -70,6 +71,7 @@ function post(path: string, body: unknown): Promise<{ status: number; body: any 
 
 before(async () => {
   repositories = createRepositories(createMemoryStore());
+  await seedCanonicalEvidence(repositories, SOURCE.id, 'route-ev-1');
   store = createWebHarvestStore({ sources: [SOURCE], repositories });
   const app = express();
   app.use(express.json());

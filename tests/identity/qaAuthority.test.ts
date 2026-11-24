@@ -12,6 +12,7 @@ import { promoteCandidates } from '../../server/ingest/promotion.ts';
 import type { IngestCandidate } from '../../server/ingest/types.ts';
 import { createMatchReviewQueue } from '../../server/identity/qaQueue.ts';
 import { promoteToCanonical } from '../../server/identity/resolver.ts';
+import { seedCanonicalEvidence } from './evidence-fixture.ts';
 
 const NOW = '2026-11-23T00:00:00.000Z';
 const OBSERVED = '2026-11-22T10:00:00.000Z';
@@ -162,6 +163,7 @@ test('a REJECT correction id is not approval authority', async () => {
 
 test('the internal review path issues real authority and records its correction', async () => {
   const repos = createRepositories(createMemoryStore());
+  await seedCanonicalEvidence(repos, 'marketplace', 'listing-auto');
   const qa = createMatchReviewQueue({ repositories: repos, now: () => new Date(NOW), floor: 0.75 });
   qa.attachToHost();
   try {

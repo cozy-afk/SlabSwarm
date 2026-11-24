@@ -21,6 +21,7 @@ import {
 } from '../../server/analytics/parquet.ts';
 import { createRepositories } from '../../server/db/repositories/index.ts';
 import { createMemoryStore } from '../../server/db/store.ts';
+import { seedCanonicalEvidence } from '../identity/evidence-fixture.ts';
 
 const PASSCODE = 'task19-operator-passcode';
 const NOW = '2026-11-23T00:00:00.000Z';
@@ -109,6 +110,7 @@ before(async () => {
 
   ({ createApp } = await import(`../../server.ts?mounted=${Date.now()}`));
   repositories = createRepositories(createMemoryStore());
+  await seedCanonicalEvidence(repositories, SOURCE.id, 'mounted-ev-approve-1', NOW);
   exporterCalls = [];
   const realExport = exportCanonicalLake;
   const countingExporter = async (source: CanonicalLakeSource, options?: CanonicalLakeOptions) => {
@@ -200,6 +202,7 @@ test('in the mounted app APPROVE triggers exactly one real lake export and REJEC
 
 test('a failed post-approval export is recorded and surfaced without rolling back the approval', async () => {
   const failingRepositories = createRepositories(createMemoryStore());
+  await seedCanonicalEvidence(failingRepositories, SOURCE.id, 'mounted-ev-failed-1', NOW);
   let failingCalls = 0;
   const failingApp = await createApp({
     webHarvestRepositories: failingRepositories,
@@ -235,4 +238,27 @@ test('a failed post-approval export is recorded and surfaced without rolling bac
   } finally {
     await new Promise<void>((resolve) => bound.server.close(() => resolve()));
   }
+});
+
+test('through the production mount, an approved observation cites a resolvable canonical evidence id', async () => {
+  const input = candidate('canonical-1');
+  const canonicalId = await seedCanonicalEvidence(repositories, input.sourceId, input.evidenceId, NOW);
+  const before = await repositories.marketObservations.list();
+
+  const queued = await post(baseUrl, '/api/web-harvest/candidates', input, authHeaders);
+  assert.equal(queued.status, 200, JSON.stringify(queued.body));
+  const approved = await post(baseUrl, '/api/web-harvest/review', {
+    candidateId: input.id, action: 'APPROVE', note: 'operator verified',
+  }, authHeaders);
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
+  assert.equal(approved.body.data.candidate.status, 'APPROVED');
+
+  const after = await repositories.marketObservations.list();
+  assert.equal(after.length, before.length + 1, 'exactly one observation was committed');
+  const written = after.find((row) => !before.some((prior) => prior.id === row.id))!;
+  assert.notEqual(written.evidenceId, input.evidenceId, 'the raw candidate id is not canonical');
+  const evidence = await repositories.evidence.get(written.evidenceId);
+  assert.ok(evidence, `approved observation cites unresolvable evidence id ${written.evidenceId}`);
+  assert.equal(evidence.id, canonicalId);
+  assert.equal(evidence.sourceId, input.sourceId);
 });
