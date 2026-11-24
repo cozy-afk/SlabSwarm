@@ -8,7 +8,7 @@ Spec owner: Forrest Mcgee. Date: 2026-11-24.
 
 People search by card name, set, number and game. Machines need stable identity. Slabswarm currently uses source refs such as `tcg:719412` as `market_observations.target_identity_id` and as the active report card `id`, while the real `cards.id` is a UUID. That makes source identity the product identity and makes search, joins and API output fragile. The goal is to make the UUID canonical, source refs addressable as aliases, and human names first-class searchable fields.
 
-TCGAPIs remains a schema/API reference only. Its 39 reference cards must be marked reference-only and must not silently stand in for first-party product catalog data.
+The 39 rows currently tagged `tcgapis` came from an earlier TCGAPIs seed. They stay in the one canonical database as source-attributed research data. TCGAPIs remains a schema/API reference only, meaning those rows are never silently presented as first-party verified product data. Provenance on each row decides how it is used, not a separate database or a hidden category.
 
 ## Goals
 
@@ -18,6 +18,7 @@ TCGAPIs remains a schema/API reference only. Its 39 reference cards must be mark
 4. Active report, forecasts, valuations, research notes and observations reference canonical card UUIDs and display human-readable name/set/game/number alongside them.
 5. Existing data is migrated additively and reversibly in the sense that old source refs remain available as aliases. No raw evidence is rewritten or deleted.
 6. Human proof: every acceptance criterion is checkable by a plain SQL query or curl command recorded in a proof log, with before/after counts and a sample search result.
+7. One canonical database holds all card types and sources as research data. `source_kind` and source attribution distinguish first-party rows from research references. No source is silently discarded or moved to a second catalog.
 
 ## Non-goals
 
@@ -31,7 +32,8 @@ TCGAPIs remains a schema/API reference only. Its 39 reference cards must be mark
 
 - Filling missing names, sets or games with invented values.
 - Treating a source ref as a card just because an observation cited it.
-- Letting reference-only TCGAPIs rows dominate the product report.
+- Treating a source-attributed card as first-party verified data.
+- Splitting research data into a second catalog or hiding it from search.
 - Hiding unresolved identity in a display-name layer while leaving the wrong keys underneath.
 
 ## Constraints
@@ -77,7 +79,7 @@ Cons: slugs can change when catalog data improves. A stable UUID plus slug alias
 - `cards.set_id`: points to `sets.id`; `sets.game_id` points to `games.id`.
 - `crosswalks`: exact source identity rows, e.g. `from_system='tcgapis'`, `from_id='tcg:719412'`, `to_system='slabswarm'`, `to_id=<card UUID>`, with confidence and source evidence.
 - `aliases`: alternate human-readable strings and source refs, e.g. `alias='AC8-112 (C)'`, `source='tcgapis'`.
-- Add an explicit `reference_only` flag or facet on cards/evidence so TCGAPIs catalog rows are excluded from first-party report ranking unless the owner asks otherwise.
+- Add `source_kind` to cards/evidence with values `FIRST_PARTY`, `RESEARCH_REFERENCE` and `OBSERVED_SOURCE`. The 39 TCGAPIs rows are `RESEARCH_REFERENCE`. They remain fully searchable and usable for research. Product/first-party scope is an explicit filter, not a separate database.
 - Add searchable indexes on `cards.name`, `cards.card_number`, `sets.name`, `sets.code`, `games.name` and normalized facets. Use lowercase normalized columns or expression indexes; do not rely on substring scans over JSON.
 
 ### Identity resolution
@@ -97,7 +99,7 @@ Cons: slugs can change when catalog data improves. A stable UUID plus slug alias
 
 ### Migration sequence
 
-1. Additive schema migration: games/sets normalization support, crosswalks/aliases indexes, search indexes, reference-only flag.
+1. Additive schema migration: games/sets normalization support, crosswalks/aliases indexes, search indexes, `source_kind` provenance column.
 2. Backfill games and sets from card facets and evidence payloads where exact values exist.
 3. Create crosswalks from source refs already present in `cards.identity_key`, evidence payloads and observation target refs.
 4. Mint canonical UUIDs for source-ref-valued card IDs; repoint references.
@@ -116,7 +118,7 @@ A plain-language proof file must be produced at `docs/proofs/2026-11-24-canonica
 4. `GET /api/intelligence/active-report` returns the same UUID and human fields for the card.
 5. Every report cited evidence ID resolves in `evidence_records`.
 6. Forecast and research outputs reference canonical UUIDs or resolve source IDs through crosswalks, with zero unresolved references.
-7. TCGAPIs reference rows are flagged and absent from first-party report ranking.
+7. Every card row has `source_kind`; the 39 TCGAPIs rows are `RESEARCH_REFERENCE`, remain in the one database and are returned by human search with that provenance tag. Research-scope report ranking includes them; first-party scope is an explicit filter that excludes them.
 8. Full suite count and deploy result.
 
 Proof must show real command output. No invented sample output is permitted.
@@ -130,7 +132,7 @@ Builder check on 2026-11-24 found that the first draft was not buildable as writ
 3. Quarantine: observations without complete human identity stay in a quarantine inventory with count, refs and reason. They are excluded from product outputs, so output references are zero-unresolved. The inventory is a stated gap, not an invented card.
 4. `identity_key` becomes a dedupe hint only, recomputed from game/set/name/number/variant. A key change never rewrites a UUID. Collisions go to QA quarantine.
 5. Games and sets are created from distinct exact text values in current data. `One Piece` and `One Piece Card Game` remain distinct unless the owner later rules otherwise. Missing values stay UNKNOWN.
-6. `reference_only` is a boolean on `cards`, default false, set on the 39 TCGAPIs reference cards. Their observations are excluded from first-party ranking and report figures. Visibility in human search is the open owner question below.
+6. `source_kind` is a provenance column on `cards` and evidence, default `OBSERVED_SOURCE`; the 39 TCGAPIs rows are `RESEARCH_REFERENCE`. All rows stay in the one canonical database and remain searchable. Reports and rankings accept an explicit scope filter: research scope includes all rows; first-party scope excludes `RESEARCH_REFERENCE`. There is no hidden catalog and no silent exclusion.
 7. Search becomes canonical-card-first with sets/games joins, deterministic dedupe against ledger identities and evidence-payload fallback. The proof searches the full name `Amalgamight, Close Encounter`.
 8. Report display fields come from canonical cards plus sets/games lookups. If a canonical card lacks complete display fields, the observation is excluded with an explicit warning. Evidence payload fallback is flagged LOW, never presented as canonical.
 9. Repoint scope includes every text column that can hold a card ref: observations, valuations, forecasts, research targets, identity decisions, aliases, printings, entities, factor scores and learning events. One old→new mapping table drives all repoints.
@@ -140,10 +142,10 @@ Builder check on 2026-11-24 found that the first draft was not buildable as writ
 13. Crosswalk vocabulary: `from_system` is the declared source id (`tcgapis`, `pokemontcg`, `scryfall`, `carddex`, `cardex`, `web:<id>`), `from_id` is the full source ref, `to_system='slabswarm'`, `to_id` is the canonical UUID. Exact provenance means source id plus source record id; ambiguous rows are listed, never guessed.
 14. Observation repoint uses an idempotent remap matched on evidence id, basis, observed_at and old target ref. A dry-run duplicate count is recorded before apply; future upserts use the canonical UUID.
 
-## Open owner question
+## Owner clarification resolved
 
-Should TCGAPIs reference-only cards remain visible in human search, clearly flagged as reference-only, or be hidden from product search entirely? My recommendation: visible but flagged, because they are real catalog evidence and useful for research, while first-party ranking and reports exclude them.
+The owner asked: "I don't understand what the reference only cards even came from we need 1 canonical database with all types of trading cards as research data right??" Answer: yes. The 39 `tcgapis` rows came from an earlier TCGAPIs seed. They remain in the one canonical database with canonical UUIDs and `source_kind=RESEARCH_REFERENCE`. They are searchable and usable for research. `source_kind` is provenance, not exclusion. First-party product scope is an explicit filter.
 
 ## Builder check status
 
-Builder check completed with `blocked_pending_owner_decisions`. Answers above close all settled items; one visibility question remains for the owner.
+Builder check completed with `blocked_pending_owner_decisions`. All decisions are now resolved and folded into the design. No owner question remains.
