@@ -121,6 +121,29 @@ A plain-language proof file must be produced at `docs/proofs/2026-11-24-canonica
 
 Proof must show real command output. No invented sample output is permitted.
 
-## Builder check
+## Builder check — folded decisions
 
-Pending. A fresh reviewer will read this design for missing decisions, contradictions and unbuildable steps. Answers already known from the conversation or project go directly into the design. Open owner questions are raised once after the check.
+Builder check on 2026-11-24 found that the first draft was not buildable as written. These decisions are now binding:
+
+1. Canonical IDs: 235 `card-<hash>` ids are not canonical. Mint fresh UUIDs for all non-UUID card ids using a recorded old→new mapping table; preserve old values as crosswalks/aliases. Only UUID-shaped ids may appear in `cards.id`, observation targets, valuation targets and report card ids.
+2. Source-ref shape: proof item 2 uses a UUID regex plus a zero-count assertion for every legacy prefix, including `tcg:`, `pokemontcg:`, `card-`, `TCG-`, `sale:` and any other observed scheme. A prefix-only check is not acceptable.
+3. Quarantine: observations without complete human identity stay in a quarantine inventory with count, refs and reason. They are excluded from product outputs, so output references are zero-unresolved. The inventory is a stated gap, not an invented card.
+4. `identity_key` becomes a dedupe hint only, recomputed from game/set/name/number/variant. A key change never rewrites a UUID. Collisions go to QA quarantine.
+5. Games and sets are created from distinct exact text values in current data. `One Piece` and `One Piece Card Game` remain distinct unless the owner later rules otherwise. Missing values stay UNKNOWN.
+6. `reference_only` is a boolean on `cards`, default false, set on the 39 TCGAPIs reference cards. Their observations are excluded from first-party ranking and report figures. Visibility in human search is the open owner question below.
+7. Search becomes canonical-card-first with sets/games joins, deterministic dedupe against ledger identities and evidence-payload fallback. The proof searches the full name `Amalgamight, Close Encounter`.
+8. Report display fields come from canonical cards plus sets/games lookups. If a canonical card lacks complete display fields, the observation is excluded with an explicit warning. Evidence payload fallback is flagged LOW, never presented as canonical.
+9. Repoint scope includes every text column that can hold a card ref: observations, valuations, forecasts, research targets, identity decisions, aliases, printings, entities, factor scores and learning events. One old→new mapping table drives all repoints.
+10. Proof 6 is non-vacuous: generate fresh forecasts and research after migration, assert counts > 0, backfill `source.targetId` on existing research rows where exact provenance allows, and query zero unresolved refs through the mapping.
+11. Proof 8 is written in two phases. Pre-deploy output is appended first; real deploy output is appended after the controller deploy.
+12. Identity decisions are append-only. Add new canonical decision rows referencing UUIDs and record the supersede; never UPDATE old rows.
+13. Crosswalk vocabulary: `from_system` is the declared source id (`tcgapis`, `pokemontcg`, `scryfall`, `carddex`, `cardex`, `web:<id>`), `from_id` is the full source ref, `to_system='slabswarm'`, `to_id` is the canonical UUID. Exact provenance means source id plus source record id; ambiguous rows are listed, never guessed.
+14. Observation repoint uses an idempotent remap matched on evidence id, basis, observed_at and old target ref. A dry-run duplicate count is recorded before apply; future upserts use the canonical UUID.
+
+## Open owner question
+
+Should TCGAPIs reference-only cards remain visible in human search, clearly flagged as reference-only, or be hidden from product search entirely? My recommendation: visible but flagged, because they are real catalog evidence and useful for research, while first-party ranking and reports exclude them.
+
+## Builder check status
+
+Builder check completed with `blocked_pending_owner_decisions`. Answers above close all settled items; one visibility question remains for the owner.
