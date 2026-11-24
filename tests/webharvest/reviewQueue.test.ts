@@ -5,6 +5,7 @@ import type { WebHarvestCandidate } from '../../server/contracts/webHarvest.ts';
 import { createRepositories } from '../../server/db/repositories/index.ts';
 import { createMemoryStore } from '../../server/db/store.ts';
 import { createWebHarvestStore } from '../../server/webharvest/store.ts';
+import { seedCanonicalEvidence } from '../identity/evidence-fixture.ts';
 
 const SOURCE = {
   id: 'fixture-source',
@@ -82,6 +83,7 @@ test('no approval means no canonical card or observation write', async () => {
 
 test('approval writes one LOW-confidence card and one evidence-backed observation with candidate provenance', async () => {
   const { store, repositories } = fixture();
+  const canonicalId = await seedCanonicalEvidence(repositories, SOURCE.id, 'ev-1');
   const queued = await store.enqueue(candidate({ confidence: 'MEDIUM' }));
 
   const result = await store.review(queued.id, 'APPROVE', 'checked against source');
@@ -115,7 +117,8 @@ test('approval writes one LOW-confidence card and one evidence-backed observatio
   assert.equal(facets.reportedConfidence, 'MEDIUM');
 
   const observation = observations[0] as unknown as Record<string, unknown>;
-  assert.equal(observation.evidenceId, 'ev-1');
+  assert.equal(observation.evidenceId, canonicalId);
+  assert.ok(await repositories.evidence.get(observation.evidenceId as string));
   assert.equal(observation.targetIdentityId, card.id);
   assert.equal(observation.basis, 'ASKING');
   assert.equal(observation.amount, 42.5);
@@ -154,6 +157,21 @@ test('rejection removes the candidate from the pending queue and writes nothing 
   assert.deepEqual(await repositories.marketObservations.list(), []);
 });
 
+test('approval fails closed when no unique canonical evidence row exists', async () => {
+  const { store, repositories } = fixture();
+  const queued = await store.enqueue(candidate({
+    id: 'cand-unresolved', evidenceId: 'ev-unresolved', name: 'Unresolved Evidence Card',
+  }));
+  await assert.rejects(
+    () => store.review(queued.id, 'APPROVE'),
+    /canonical evidence/i,
+    'an unresolvable candidate id must never become a canonical observation',
+  );
+  assert.equal((await store.listCandidates({ status: 'PENDING' })).length, 1);
+  assert.deepEqual(await repositories.cards.list(), []);
+  assert.deepEqual(await repositories.marketObservations.list(), []);
+});
+
 test('a decided candidate cannot be reviewed a second time', async () => {
   const { store } = fixture();
   const queued = await store.enqueue(candidate());
@@ -163,6 +181,9 @@ test('a decided candidate cannot be reviewed a second time', async () => {
 
 test('missing basis or amount writes the LOW-confidence card but no invented observation', async () => {
   const { store, repositories } = fixture();
+  for (const reference of ['ev-unknown-amount', 'ev-unknown-basis']) {
+    await seedCanonicalEvidence(repositories, SOURCE.id, reference);
+  }
   const noAmount = await store.enqueue(candidate({
     id: 'cand-unknown-amount',
     evidenceId: 'ev-unknown-amount',

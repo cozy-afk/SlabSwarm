@@ -31,6 +31,7 @@ import { createMemoryStore } from '../../server/db/store.ts';
 import { buildActiveReport } from '../../server/intelligence/active-report.ts';
 import { createWebHarvestRouter } from '../../server/webharvest/routes.ts';
 import { createWebHarvestStore } from '../../server/webharvest/store.ts';
+import { seedCanonicalEvidence } from '../identity/evidence-fixture.ts';
 
 const NOW = new Date('2026-11-22T00:00:00.000Z');
 const OBSERVED_AT = '2026-11-21T00:00:00.000Z';
@@ -277,6 +278,7 @@ test('active report cites canonical evidence ids and carries the seven-dataset l
 
 test('an approved harvest rebuilds the lake; a rejection does not', async () => {
   const repositories = createRepositories(createMemoryStore());
+  await seedCanonicalEvidence(repositories, SOURCE.id, 'lake-ev-approved-1', OBSERVED_AT);
   const harvestStore = createWebHarvestStore({ sources: [SOURCE], repositories, now: () => NOW });
   const harvestLakeDir = path.join(lakeRoot, 'harvest');
   let exportCount = 0;

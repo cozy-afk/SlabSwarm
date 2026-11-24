@@ -17,6 +17,7 @@ import type {
   WebSourceConfig,
 } from '../contracts/webHarvest.ts';
 import type { Card, CardRepository } from '../db/repositories/card.ts';
+import type { EvidenceRepository } from '../db/repositories/index.ts';
 import type { MarketObservationRepository } from '../db/repositories/marketObservation.ts';
 import { createRepositories } from '../db/repositories/index.ts';
 import { createDefaultStore } from '../db/store.ts';
@@ -27,6 +28,8 @@ export type ReviewAction = 'APPROVE' | 'REJECT';
 export interface WebHarvestRepositories {
   cards: Pick<CardRepository, 'upsert' | 'list'>;
   marketObservations: Pick<MarketObservationRepository, 'create' | 'list'>;
+  /** Canonical evidence lookup: an approved observation must cite a real row. */
+  evidence: Pick<EvidenceRepository, 'get' | 'list'>;
 }
 
 export interface WebHarvestStoreOptions {
@@ -153,6 +156,49 @@ function assertApprovable(candidate: WebHarvestCandidate): void {
   }
 }
 
+type EvidenceResolution = { id: string } | { reason: string };
+
+/**
+ * Resolve the candidate's raw evidence reference to an existing canonical
+ * evidence row by exact provenance. Mirrors the resolver/sync boundary: direct
+ * canonical id, exact sourceId+sourceRecordId, or exact sourceId plus the
+ * payload's record externalId/id. Zero or multiple matches fail closed.
+ */
+async function canonicalEvidenceForApproval(
+  repositories: WebHarvestRepositories,
+  candidate: WebHarvestCandidate,
+): Promise<EvidenceResolution> {
+  const reference = text(candidate.evidenceId);
+  const sourceId = text(candidate.sourceId);
+  if (reference === UNKNOWN || sourceId === UNKNOWN) {
+    return { reason: 'candidate sourceId or evidenceId is missing' };
+  }
+  const direct = await repositories.evidence.get(reference);
+  if (direct) return { id: direct.id };
+
+  const byRecordId = await repositories.evidence.list({ sourceId, sourceRecordId: reference });
+  if (byRecordId.length === 1) return { id: byRecordId[0]!.id };
+  if (byRecordId.length > 1) {
+    return { reason: `ambiguous canonical evidence for ${sourceId}:${reference} (${byRecordId.length} rows)` };
+  }
+
+  const bySource = await repositories.evidence.list({ sourceId });
+  const byPayloadId = bySource.filter((row) => {
+    const payload = row.parsedPayload;
+    const record = payload && typeof payload === 'object'
+      ? (payload as Record<string, unknown>).record
+      : null;
+    if (record === null || typeof record !== 'object') return false;
+    const fields = record as Record<string, unknown>;
+    return text(fields.externalId) === reference || text(fields.id) === reference;
+  });
+  if (byPayloadId.length === 1) return { id: byPayloadId[0]!.id };
+  if (byPayloadId.length > 1) {
+    return { reason: `ambiguous canonical evidence for ${sourceId} evidenceId=${reference} (${byPayloadId.length} rows)` };
+  }
+  return { reason: `no canonical evidence row for sourceId=${sourceId} evidenceId=${reference}` };
+}
+
 export function createWebHarvestStore(options: WebHarvestStoreOptions = {}) {
   const sources: WebSourceConfig[] = clone(options.sources ?? []);
   const candidates = new Map<string, ReviewCandidate>();
@@ -228,6 +274,17 @@ export function createWebHarvestStore(options: WebHarvestStoreOptions = {}) {
 
     if (action === 'APPROVE') {
       assertApprovable(current);
+      // Fail closed before any canonical write: an observation may only cite
+      // an existing canonical evidence row, resolved by exact provenance.
+      const resolution = await canonicalEvidenceForApproval(repositories, current);
+      if ('reason' in resolution) {
+        throw new ReviewError(
+          `Canonical evidence unresolved (${resolution.reason}); nothing was written.`,
+          'evidence_unresolved',
+          409,
+        );
+      }
+      const canonicalEvidenceId = resolution.id;
       // Canonical writes happen before the queue state flips: a failed write
       // leaves the candidate PENDING so an operator can retry, and approval is
       // the only path that can reach these repositories.
@@ -235,7 +292,7 @@ export function createWebHarvestStore(options: WebHarvestStoreOptions = {}) {
       const basisExplicit = current.basis !== UNKNOWN;
       if (basisExplicit && hasAmount(current.amount)) {
         observation = await repositories.marketObservations.create({
-          evidenceId: current.evidenceId,
+          evidenceId: canonicalEvidenceId,
           sourceRecordId: current.evidenceId,
           targetIdentityRef: card.id,
           basis: current.basis as MarketBasis,
