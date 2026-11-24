@@ -5,9 +5,11 @@
  * Matching is exact and provenance-based only. A ledger evidence row is
  * located by an exact id/reference recorded on the orphan observation, then
  * the canonical Postgres evidence row is selected by the immutable triple
- * (sourceId, sourceRecordId, checksum). Nothing is guessed, no evidence row
- * is deleted or rewritten, and every unmatched observation stays in the
- * failure report.
+ * (sourceId, sourceRecordId, checksum). When two ledger rows share the same
+ * provenance, an exact observedAt/capturedAt equality with the observation
+ * is the deterministic tie-breaker; no unique match fails closed. Nothing is
+ * guessed, no evidence row is deleted or rewritten, and every unmatched
+ * observation stays in the failure report.
  *
  * Dry-run by default. `--apply` performs only the evidence_id update.
  * This module does nothing when imported; the CLI runs only as main.
@@ -37,6 +39,8 @@ export interface RepairChange {
   sourceRecordId: string;
   /** Exact matching key used: source+sourceRecordId+checksum or source+sourceRecordId. */
   matchedBy?: string;
+  /** Set only when duplicate ledger rows were disambiguated by an exact timestamp. */
+  tieBrokenBy?: string;
 }
 
 export interface RepairReport {
@@ -102,6 +106,24 @@ function observationRefsOf(row: Row): string[] {
   return [...refs];
 }
 
+/**
+ * Deterministic tie-break for duplicated ledger provenance: exact string
+ * equality of the observation's observedAt, then capturedAt, against the
+ * candidate ledger rows. Accept only a unique match at a tier; never guess.
+ */
+function tieBreakByTimestamp(
+  observation: Row,
+  candidates: readonly Row[],
+): { row: Row; field: string } | null {
+  for (const field of ['observedAt', 'capturedAt'] as const) {
+    const expected = text(observation[field]);
+    if (!expected) continue;
+    const tied = candidates.filter((candidate) => text(candidate[field]) === expected);
+    if (tied.length === 1) return { row: tied[0]!, field };
+  }
+  return null;
+}
+
 async function updateCanonicalEvidenceRef(observationId: string, evidenceId: string): Promise<void> {
   // Parameterised, single-column update. No DELETE, TRUNCATE or payload write.
   await getDefaultExecutor().query(
@@ -154,15 +176,23 @@ export async function repairEvidenceRefs(options: RepairOptions): Promise<Repair
       });
       continue;
     }
+    let ledgerRow: Row;
+    let tieBrokenBy: string | undefined;
     if (candidates.size > 1) {
-      report.failures.push({
-        observationId,
-        evidenceId: citedId,
-        reason: `ambiguous ledger provenance (${candidates.size} exact matches); refusing to guess`,
-      });
-      continue;
+      const tie = tieBreakByTimestamp(row, [...candidates]);
+      if (!tie) {
+        report.failures.push({
+          observationId,
+          evidenceId: citedId,
+          reason: `ambiguous ledger provenance (${candidates.size} exact matches); no unique exact observedAt/capturedAt tie-breaker; refusing to guess`,
+        });
+        continue;
+      }
+      ledgerRow = tie.row;
+      tieBrokenBy = `${tie.field} (exact equality)`;
+    } else {
+      ledgerRow = [...candidates][0]!;
     }
-    const ledgerRow = [...candidates][0]!;
     const sourceId = text(ledgerRow.sourceId);
     const sourceRecordId = text(ledgerRow.sourceRecordId);
     if (!sourceId || !sourceRecordId) {
@@ -219,7 +249,8 @@ export async function repairEvidenceRefs(options: RepairOptions): Promise<Repair
       try {
         await (options.updateEvidenceRef ?? updateCanonicalEvidenceRef)(observationId, canonicalId);
         report.repairs.push({
-          observationId, from: citedId, to: canonicalId, sourceId, sourceRecordId, matchedBy,
+          observationId, from: citedId, to: canonicalId,
+          sourceId, sourceRecordId, matchedBy, tieBrokenBy,
         });
         report.repaired += 1;
       } catch (error) {
