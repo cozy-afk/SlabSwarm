@@ -63,6 +63,12 @@ interface Proposal extends FreeFeedRecord {
   expectedAttributes?: unknown;
   /** Numeric confidence floor override for this proposal. */
   confidenceFloor?: unknown;
+  /**
+   * Canonical Postgres evidence id resolved at the sync/promotion boundary.
+   * When present it is used for the observation reference only; identity keys
+   * and aliases keep the source-scoped id and are deliberately unchanged.
+   */
+  canonicalEvidenceId?: unknown;
 }
 
 /** Host-only arguments. Never sourced from a proposal, payload or model. */
@@ -424,6 +430,11 @@ export async function promoteToCanonical(
   const proposal = candidate as Proposal;
   const repos = repositoriesOf(proposal);
   const evidenceId = evidenceIdOf(proposal);
+  // Referential integrity: an observation may only cite a canonical evidence
+  // row. Identity keys and aliases keep the source-scoped `evidenceId`; only
+  // the observation reference is promoted to the Postgres evidence id.
+  const suppliedEvidenceId = text(proposal.canonicalEvidenceId);
+  const observationEvidenceId = suppliedEvidenceId === UNKNOWN ? evidenceId : suppliedEvidenceId;
   const report: CanonicalWriteReport = {
     accepted: false,
     evidenceId,
@@ -563,12 +574,21 @@ export async function promoteToCanonical(
         }));
       }
 
+      if (suppliedEvidenceId !== UNKNOWN) {
+        // A supplied canonical id must exist in this repository; never fall
+        // back to a synthetic id and present an orphan as evidence-backed.
+        const canonicalEvidence = await tx.evidence.get(observationEvidenceId);
+        if (!canonicalEvidence) {
+          throw new Error(`canonical evidence ${observationEvidenceId} does not exist`);
+        }
+      }
+
       if (hasPrice) {
         const hardDisposition = report.quarantine
           ? (qaCorrectionId ? 'QA_APPROVED' : report.quarantine.decision)
           : null;
         const ingestCandidate: IngestCandidate = {
-          evidenceId,
+          evidenceId: observationEvidenceId,
           targetIdentityRef: canonicalId,
           basis: proposal.basis,
           amount,
@@ -604,7 +624,7 @@ export async function promoteToCanonical(
       }
 
       const observations = await tx.marketObservations.list({
-        evidenceId,
+        evidenceId: observationEvidenceId,
         targetIdentityRef: canonicalId,
         basis: proposal.basis,
       });

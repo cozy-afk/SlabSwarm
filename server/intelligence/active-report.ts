@@ -76,7 +76,10 @@ export interface ActiveReportMeta {
     targetCount: number;
     findingCount: number;
     cardCount: number;
+    unresolvedEvidenceRefCount: number;
   };
+  /** Unresolved evidence ids excluded from `cards[].evidence` with a warning. */
+  evidenceWarnings: string[];
   /** Last successful Parquet export, or the literal UNKNOWN when none exists. */
   lakeManifest: ParquetExportResult | typeof UNKNOWN;
 }
@@ -196,6 +199,7 @@ function bandOf(
 function evidenceRefsOf(
   observations: MarketObservation[],
   evidenceById: Map<string, EvidenceRecord>,
+  unresolved: Set<string>,
 ): EvidenceRef[] {
   const refs = new Map<string, EvidenceRef>();
   for (const observation of observations) {
@@ -204,9 +208,13 @@ function evidenceRefsOf(
       : null;
     if (!id || refs.has(id)) continue;
     const evidence = evidenceById.get(id);
-    const source = asText(evidence
-      ? (evidence as unknown as Record<string, unknown>).sourceId
-      : observation.marketplace);
+    // Never present an unresolved id as evidence-backed. Record it for the
+    // caller to reject explicitly instead of emitting a misleading ref.
+    if (!evidence) {
+      unresolved.add(id);
+      continue;
+    }
+    const source = asText(evidence.sourceId);
     const observedAt = validTimestamp(observation.observedAt) ??
       validTimestamp(evidence?.observedAt) ??
       UNKNOWN;
@@ -241,6 +249,7 @@ export async function buildActiveReport(
     repositories.marketObservations.list(),
   ]);
   const evidenceById = new Map(evidenceRows.map((record) => [record.id, record]));
+  const unresolvedEvidenceRefs = new Set<string>();
 
   // Phase 3: re-run the deterministic discovery sweep over the exact same
   // first-party evidence that feeds this report. No LLM, no network, no writes
@@ -335,7 +344,7 @@ export async function buildActiveReport(
       priceBand,
       drivers,
       invalidators,
-      evidence: evidenceRefsOf(ordered, evidenceById),
+      evidence: evidenceRefsOf(ordered, evidenceById, unresolvedEvidenceRefs),
       confidence: confidenceOf(targetFindings),
       freshness: freshnessOf(lastObservedAt, now, staleDays),
     });
@@ -364,6 +373,14 @@ export async function buildActiveReport(
     newestObservationAt: timestamps[timestamps.length - 1] ?? UNKNOWN,
   };
 
+  const unresolved = [...unresolvedEvidenceRefs].sort();
+  const evidenceWarnings = unresolved.length === 0
+    ? []
+    : [
+      `Excluded ${unresolved.length} unresolved evidence ref(s) from report evidence; `
+        + `they are not evidence-backed: ${unresolved.join(', ')}`,
+    ];
+
   return {
     data: {
       generatedAt: now.toISOString(),
@@ -380,7 +397,9 @@ export async function buildActiveReport(
         targetCount: byTarget.size,
         findingCount: findings.length,
         cardCount: rankedCards.length,
+        unresolvedEvidenceRefCount: unresolved.length,
       },
+      evidenceWarnings,
       lakeManifest,
     },
   };

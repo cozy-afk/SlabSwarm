@@ -133,7 +133,15 @@ test('a free-feed harvest promotes complete records, rejects provenance-incomple
   const observations = await canonical.marketObservations.list();
   assert.equal(observations.length, 1, 'one canonical observation');
   const observation = observations[0]!;
-  assert.equal(observation.evidenceId, 'pokemontcg:base1-4');
+  // The observation must cite a canonical evidence_records id, never the
+  // ledger's `ev-*` id or the synthetic `source:externalId` identity key (A-01).
+  const canonicalEvidence = await canonical.evidence.get(observation.evidenceId);
+  assert.ok(
+    canonicalEvidence,
+    `promoted observation cites unresolvable evidence id ${observation.evidenceId}`,
+  );
+  assert.equal(canonicalEvidence.sourceRecordId, ledgerEvidence!.sourceRecordId);
+  assert.equal(canonicalEvidence.checksum, ledgerEvidence!.checksum);
   assert.equal(observation.basis, 'GUIDE', 'a catalog price stays GUIDE, never SOLD');
   assert.equal(observation.amount, 412.5, 'the published price is copied, never invented');
   assert.equal(observation.currency, 'USD');

@@ -362,6 +362,32 @@ function freeFeedRecordOf(evidence: StoredEvidenceRecord): FreeFeedRecord | null
   return record as FreeFeedRecord;
 }
 
+/**
+ * Project one immutable ledger evidence row into canonical evidence_records
+ * before promotion. Upsert is keyed on the exact triple (sourceId,
+ * sourceRecordId, checksum): reruns reuse the same canonical id and no raw
+ * evidence payload is rewritten.
+ */
+async function canonicalEvidenceIdOf(
+  repositories: Repositories,
+  evidence: StoredEvidenceRecord,
+): Promise<string> {
+  const canonical = await repositories.evidence.upsert({
+    sourceId: evidence.sourceId,
+    sourceRecordId: evidence.sourceRecordId,
+    sourceUri: evidence.sourceUri ?? null,
+    capturedAt: evidence.capturedAt,
+    observedAt: evidence.observedAt,
+    checksum: evidence.checksum,
+    mimeType: evidence.mimeType,
+    license: evidence.license ?? null,
+    rawRef: evidence.rawRef,
+    parsedPayload: evidence.parsedPayload ?? null,
+    trustTier: evidence.trustTier ?? 'UNKNOWN',
+  } as Parameters<Repositories['evidence']['upsert']>[0]);
+  return canonical.id;
+}
+
 export interface FreeFeedHarvestPromotionInput {
   /** Configured feed id; used only to select this harvest's ledger rows. */
   sourceId: string;
@@ -429,19 +455,23 @@ export async function promoteFreeFeedHarvest(
       report.reasons.push(`ledger evidence ${evidence.id} has no free-feed record to promote`);
       continue;
     }
-    const proposal = {
-      ...record,
-      capturedAt: input.capturedAt,
-      lineage: [
-        `source:${input.sourceId}`,
-        `run:${input.run.id}`,
-        `evidence:${evidence.id}`,
-      ],
-      confidence: confidenceOf(evidence),
-      now: () => new Date(input.capturedAt),
-      repositories: input.repositories,
-    } as FreeFeedRecord;
     try {
+      // Canonical evidence must exist before the observation can cite it.
+      // Fail closed (reported below) if the exact-provenance upsert fails.
+      const canonicalEvidenceId = await canonicalEvidenceIdOf(input.repositories, evidence);
+      const proposal = {
+        ...record,
+        capturedAt: input.capturedAt,
+        lineage: [
+          `source:${input.sourceId}`,
+          `run:${input.run.id}`,
+          `evidence:${evidence.id}`,
+        ],
+        confidence: confidenceOf(evidence),
+        now: () => new Date(input.capturedAt),
+        repositories: input.repositories,
+        canonicalEvidenceId,
+      } as FreeFeedRecord;
       // Read-only decision for the audit report; the committing path resolves
       // again inside its own transaction against the same repository.
       const decision = await resolveCandidate(proposal);
