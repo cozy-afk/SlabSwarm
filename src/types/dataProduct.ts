@@ -150,6 +150,7 @@ export interface ForecastReport {
   id: string;
   targetType: 'CARD' | 'SET' | 'COLLECTION' | 'EVENT';
   targetId: string;
+  targetName?: string;
   horizonDays: 7 | 30 | 90;
   scenario: string;
   priceBands: ForecastBandView;

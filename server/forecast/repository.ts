@@ -15,6 +15,7 @@ export class ForecastValidationError extends Error {
 
 export interface ForecastRecord extends Forecast {
   baselinePrice: number | null;
+  targetName?: string;
   sourceSimulationId?: string;
 }
 
@@ -93,6 +94,9 @@ class ForecastRepository {
       id: `fc-${String(this.sequence).padStart(6, '0')}`,
       targetType: raw.targetType as Forecast['targetType'],
       targetId: raw.targetId,
+      ...(typeof raw.targetName === 'string' && raw.targetName.trim() !== ''
+        ? { targetName: raw.targetName }
+        : {}),
       horizonDays: raw.horizonDays as Forecast['horizonDays'],
       scenario: typeof raw.scenario === 'string' ? raw.scenario : 'unspecified',
       priceBands,
