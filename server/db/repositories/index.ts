@@ -72,7 +72,7 @@ export type {
   AliasInput, AliasRepository, AliasRow,
   IdentityDecisionInput, IdentityDecisionRepository, IdentityDecisionRow,
 } from './identity.ts';
-export type { Forecast, ForecastInput, ForecastRepository } from './forecast.ts';
+export type { Forecast, ForecastInput, ForecastRecord, ForecastRepository } from './forecast.ts';
 export type { Job, JobInput, JobStatus, JobsRepository } from './jobs.ts';
 export type { LearningEvent, LearningEventInput, LearningRepository } from './learning.ts';
 export type { MarketObservationRepository } from './marketObservation.ts';
