@@ -7,12 +7,16 @@ import { requireFiniteAmount, requireNonEmpty } from '../validation.ts';
 
 export type { Forecast } from '../../contracts/dataProduct.ts';
 
-export type ForecastInput = Omit<Forecast, 'id' | 'createdAt' | 'status'> & { status?: Forecast['status'] };
+export interface ForecastRecord extends Forecast {
+  targetName?: string;
+}
+
+export type ForecastInput = Omit<ForecastRecord, 'id' | 'createdAt' | 'status'> & { status?: Forecast['status'] };
 export interface ForecastRepository {
-  create(input: ForecastInput): Promise<Forecast>;
-  get(id: string): Promise<Forecast | null>;
-  list(filters?: Record<string, unknown>): Promise<Forecast[]>;
-  upsert(input: Forecast): Promise<Forecast>;
+  create(input: ForecastInput): Promise<ForecastRecord>;
+  get(id: string): Promise<ForecastRecord | null>;
+  list(filters?: Record<string, unknown>): Promise<ForecastRecord[]>;
+  upsert(input: ForecastRecord): Promise<ForecastRecord>;
 }
 
 const TABLE = 'forecasts';
@@ -23,6 +27,7 @@ function toRow(input: ForecastInput, id: string, createdAt: string): Row {
     id,
     targetType: input.targetType,
     targetId: input.targetId,
+    targetName: input.targetName ?? null,
     horizonDays: input.horizonDays,
     scenario: input.scenario,
     priceBands: input.priceBands,
@@ -39,21 +44,21 @@ function toRow(input: ForecastInput, id: string, createdAt: string): Row {
 
 export function createForecastRepository(store: DbStore): ForecastRepository {
   return {
-    async create(input): Promise<Forecast> {
+    async create(input): Promise<ForecastRecord> {
       requireNonEmpty(input.targetId, 'targetId');
       requireFiniteAmount(input.priceBands.base, 'priceBands.base');
-      return (await store.insert(TABLE, toRow(input, randomUUID(), new Date().toISOString()))) as unknown as Forecast;
+      return (await store.insert(TABLE, toRow(input, randomUUID(), new Date().toISOString()))) as unknown as ForecastRecord;
     },
-    async get(id): Promise<Forecast | null> {
+    async get(id): Promise<ForecastRecord | null> {
       const row = await store.findById(TABLE, id);
-      return row ? (row as unknown as Forecast) : null;
+      return row ? (row as unknown as ForecastRecord) : null;
     },
-    async list(filters = {}): Promise<Forecast[]> {
-      return (await store.findAll(TABLE, filters, { orderBy: { column: 'createdAt', direction: 'DESC' } })) as unknown as Forecast[];
+    async list(filters = {}): Promise<ForecastRecord[]> {
+      return (await store.findAll(TABLE, filters, { orderBy: { column: 'createdAt', direction: 'DESC' } })) as unknown as ForecastRecord[];
     },
-    async upsert(input): Promise<Forecast> {
+    async upsert(input): Promise<ForecastRecord> {
       const row = toRow(input, input.id, input.createdAt ?? new Date().toISOString());
-      return (await store.upsert(TABLE, row, CONFLICT_KEYS)) as unknown as Forecast;
+      return (await store.upsert(TABLE, row, CONFLICT_KEYS)) as unknown as ForecastRecord;
     },
   };
 }

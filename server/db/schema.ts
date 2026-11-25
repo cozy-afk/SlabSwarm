@@ -281,6 +281,7 @@ export const forecasts = pgTable(
     id: id(),
     targetType: text('target_type').notNull(),
     targetId: text('target_id').notNull(),
+    targetName: text('target_name'),
     horizonDays: integer('horizon_days').notNull(),
     scenario: text('scenario').notNull(),
     priceBands: jsonb('price_bands').$type<Record<string, unknown>>().notNull(),

@@ -17,6 +17,7 @@ import { getLearningState } from '../forecast/learning.ts';
 import { runSwarmResearch, swarmRunStore } from '../swarm/run.ts';
 import { observationTargetRef } from '../analytics/discovery.ts';
 import type { ResearchNoteRepository } from '../db/repositories/index.ts';
+import type { ForecastRepository } from '../db/repositories/forecast.ts';
 import type { EvidenceItem } from '../swarm/tools.ts';
 import { envelope, errorEnvelope, newContext, UNKNOWN } from './catalog.ts';
 
@@ -25,6 +26,7 @@ interface ObservationListSource {
     list(filters?: Record<string, unknown>): Promise<MarketObservation[]>;
   };
   researchNotes?: ResearchNoteRepository;
+  forecasts?: ForecastRepository;
 }
 
 function send(res: Response, data: unknown, source: string, warnings: string[]): void {
@@ -106,10 +108,45 @@ export function createDataProductContractRouter(
     ]);
   });
 
-  router.get('/api/forecasts', ...middleware, (_req, res) => {
-    send(res, forecastRepository.list(), 'forecastRepository', [
+  router.get('/api/forecasts', ...middleware, async (_req, res) => {
+    const rows = repositories.forecasts
+      ? await repositories.forecasts.list()
+      : forecastRepository.list();
+    send(res, rows, repositories.forecasts ? 'canonical.forecasts' : 'forecastRepository', [
       'Forecasts are hypotheses until scored against realized outcomes.',
       'Empty list means no forecast has been created, not that prices are zero.',
+    ]);
+  });
+
+  router.post('/api/forecasts', ...middleware, async (req, res) => {
+    if (!repositories.forecasts) {
+      res.status(503).json(errorEnvelope('No durable forecast repository is configured.', 'FORECAST_STORE_UNAVAILABLE', newContext()));
+      return;
+    }
+    try {
+      const created = await repositories.forecasts.create(bodyObject(req) as never);
+      res.status(201).json(envelope(created, newContext(), {
+        source: 'canonical.forecasts',
+        basis: UNKNOWN as never,
+        currency: UNKNOWN,
+        warnings: ['Forecast is a hypothesis until scored against a real outcome.'],
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json(errorEnvelope(message, 'INVALID_FORECAST', newContext()));
+    }
+  });
+
+  router.get('/api/forecasts/:id', ...middleware, async (req, res) => {
+    const row = repositories.forecasts
+      ? await repositories.forecasts.get(req.params.id)
+      : forecastRepository.get(req.params.id);
+    if (!row) {
+      res.status(404).json(errorEnvelope('Forecast not found', 'FORECAST_NOT_FOUND', newContext()));
+      return;
+    }
+    send(res, { ...row, scores: [] }, repositories.forecasts ? 'canonical.forecasts' : 'forecastRepository', [
+      'Forecasts are hypotheses until scored against realized outcomes.',
     ]);
   });
 
