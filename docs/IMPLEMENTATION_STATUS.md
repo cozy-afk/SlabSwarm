@@ -138,6 +138,7 @@ Key commits include `f1126e8`, `7d26014`, `e87c727`, `cd684f8`, `4af4e57`, `704a
 - Eight product sections: catalog, market intelligence, valuation/arbitrage, research, learning, forecast lab, tracking and sources.
 - Forecasts carry `targetName` from the active report and the UI shows the card name first, with the stable ID secondary.
 - Shared `{ data, meta }` envelope restored for UI routes.
+- `/api/evidence` list is capped at 100 rows by default (max 500) and omits raw payloads; `/api/evidence/:id` serves the full immutable record. This prevents the default Sources tab from requesting a 247 MB JSON document.
 - UI compatibility fields preserved for catalog views.
 - Watchlist, alerts and portfolio surface behind the existing gate.
 - Hermes bridge tool IDs kept stable.
