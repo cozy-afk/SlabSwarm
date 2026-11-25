@@ -57,7 +57,10 @@ export function createResearchNoteRepository(store: DbStore): ResearchNoteReposi
       })) as unknown as ResearchNoteRecord[];
     },
     async upsert(input): Promise<ResearchNoteRecord> {
-      return (await store.upsert(TABLE, toRow(input), ['id'])) as unknown as ResearchNoteRecord;
+      const existing = await store.findById(TABLE, input.id);
+      const existingCreatedAt = typeof existing?.createdAt === 'string' ? existing.createdAt : undefined;
+      const createdAt = existingCreatedAt ?? input.createdAt;
+      return (await store.upsert(TABLE, toRow({ ...input, createdAt }), ['id'])) as unknown as ResearchNoteRecord;
     },
   };
 }
