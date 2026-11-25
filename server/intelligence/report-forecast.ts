@@ -115,6 +115,7 @@ export function scoreReportForecast(
     const forecast: ForecastRecord = createForecast({
       targetType: 'CARD',
       targetId: draft.targetId,
+      targetName: draft.name,
       horizonDays: horizon,
       scenario: 'report-derived',
       priceBands: {

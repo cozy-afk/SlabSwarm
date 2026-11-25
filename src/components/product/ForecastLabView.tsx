@@ -97,7 +97,10 @@ export function ForecastLabView() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-xs text-[#E2E8F0]">
-                      {forecast.targetType} · {forecast.targetId}
+                      {forecast.targetName || forecast.targetId}
+                    </span>
+                    <span className="font-mono text-[10px] text-[#64748B]">
+                      {forecast.targetId}
                     </span>
                     <ConfidenceChip value={forecast.confidence} />
                   </div>
