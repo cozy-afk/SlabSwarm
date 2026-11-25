@@ -146,6 +146,28 @@ function notFound(res: Response, label: string): void {
   respondError(res, 404, `${label} not found`, 'not_found');
 }
 
+const DEFAULT_EVIDENCE_LIST_LIMIT = 100;
+const MAX_EVIDENCE_LIST_LIMIT = 500;
+
+function evidenceListLimit(value: Request['query'][string]): number {
+  if (value === undefined) return DEFAULT_EVIDENCE_LIST_LIMIT;
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== 'string' || raw.trim() === '') return DEFAULT_EVIDENCE_LIST_LIMIT;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_EVIDENCE_LIST_LIMIT) {
+    throw new EvidenceListValidationError(`limit must be an integer between 1 and ${MAX_EVIDENCE_LIST_LIMIT}.`);
+  }
+  return parsed;
+}
+
+class EvidenceListValidationError extends Error {}
+
+/** List views never need the raw payload. Fetch the single record for that. */
+function evidenceSummary(record: Record<string, unknown>): Record<string, unknown> {
+  const { parsedPayload: _parsedPayload, ...summary } = record;
+  return summary;
+}
+
 export interface IngestRouterOptions {
   /** Web harvesting is opt-in: no sources are configured by default. */
   web?: {
@@ -204,8 +226,22 @@ export function createIngestRouter(
 
   // Evidence ---------------------------------------------------------------
   router.get('/api/evidence', async (req, res) => {
-    const evidence = await repos.evidence.list(filters(req.query));
-    respond(res, 200, evidence, { evidence });
+    try {
+      const limit = evidenceListLimit(req.query.limit);
+      const queryFilters = { ...filters(req.query), limit };
+      const rows = (await repos.evidence.list(queryFilters)).map((record) =>
+        evidenceSummary(record as unknown as Record<string, unknown>),
+      );
+      respond(res, 200, rows, { evidence: rows }, [
+        `List is limited to ${limit} records; fetch /api/evidence/:id for the full raw payload.`,
+      ], { limit, returned: rows.length });
+    } catch (error) {
+      if (error instanceof EvidenceListValidationError) {
+        respondError(res, 400, error.message, 'INVALID_LIMIT');
+        return;
+      }
+      throw error;
+    }
   });
 
   router.get('/api/evidence/:id', async (req, res) => {
