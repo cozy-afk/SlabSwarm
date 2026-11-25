@@ -38,10 +38,10 @@ Last verified counts:
 | `market_observations` | 261 |
 | `identity_decisions` | 275 |
 | `valuations` | 243 |
-| `research_notes` | 15 |
-| `forecasts` (DB table) | 0 |
+| `research_notes` | 16 |
+| `forecasts` (DB table) | 27 |
 
-The 27 live forecasts are in the in-memory forecast repository, not in Postgres. An app restart clears them until regenerated.
+Forecasts are persisted in Postgres and survive app restarts. No regeneration is needed after a restart.
 
 ### Active report
 
@@ -136,6 +136,7 @@ Key commits include `f1126e8`, `7d26014`, `e87c727`, `cd684f8`, `4af4e57`, `704a
 ### 3.6 UI and API contracts
 
 - Eight product sections: catalog, market intelligence, valuation/arbitrage, research, learning, forecast lab, tracking and sources.
+- Forecasts carry `targetName` from the active report and the UI shows the card name first, with the stable ID secondary.
 - Shared `{ data, meta }` envelope restored for UI routes.
 - UI compatibility fields preserved for catalog views.
 - Watchlist, alerts and portfolio surface behind the existing gate.
@@ -194,7 +195,7 @@ Nothing was lost. The branch is intact and the live app remains healthy.
 
 1. Source refs such as `tcg:719412` are still used as canonical card IDs in the report.
 2. `crosswalks` and `aliases` tables are empty.
-3. Forecasts live in memory, not in the `forecasts` table.
+3. Forecast scoring and learning cycles are still empty; forecasts are persisted hypotheses, not learned predictions.
 4. Learning cycles, forecast scores and factor scores are empty.
 5. TCGAPIs rows are not distinguished by `source_kind` in the deployed schema.
 6. Research proposals are all rejected; the review gate has not accepted an insight as canonical.
