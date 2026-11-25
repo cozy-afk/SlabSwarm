@@ -16,6 +16,7 @@ import { forecastRepository } from '../forecast/repository.ts';
 import { getLearningState } from '../forecast/learning.ts';
 import { runSwarmResearch, swarmRunStore } from '../swarm/run.ts';
 import { observationTargetRef } from '../analytics/discovery.ts';
+import type { ResearchNoteRepository } from '../db/repositories/index.ts';
 import type { EvidenceItem } from '../swarm/tools.ts';
 import { envelope, errorEnvelope, newContext, UNKNOWN } from './catalog.ts';
 
@@ -23,6 +24,7 @@ interface ObservationListSource {
   marketObservations: {
     list(filters?: Record<string, unknown>): Promise<MarketObservation[]>;
   };
+  researchNotes?: ResearchNoteRepository;
 }
 
 function send(res: Response, data: unknown, source: string, warnings: string[]): void {
@@ -144,14 +146,44 @@ export function createDataProductContractRouter(
       ...(typeof body.maxItems === 'number' ? { maxItems: body.maxItems } : {}),
       ...(typeof body.asOf === 'string' ? { asOf: body.asOf } : {}),
     });
+    const warnings = [
+      'Role claims are proposals, never canonical facts.',
+      'The question text is not used as evidence.',
+    ];
+    const question = typeof body.question === 'string' && body.question.trim() !== ''
+      ? body.question.trim()
+      : 'Evidence-first research run';
+    if (repositories.researchNotes) {
+      const claims = (run.roles ?? []).flatMap((role) => role.claims ?? []);
+      await repositories.researchNotes.upsert({
+        id: `research-note-${run.id}`,
+        question,
+        subquestions: claims as unknown as Record<string, unknown>[],
+        evidenceIds: run.evidenceIds,
+        synthesis:
+          `Research run ${run.id} for ${targetId} cited ${run.evidenceIds.length} canonical evidence rows ` +
+          `and produced ${claims.length} role claims. Decision: ${run.decision}. ` +
+          'All role claims are proposals; no canonical card, price or sale was changed.',
+        confidence: run.decision === 'REJECT' ? 0 : 0.5,
+        missingData: ['No scored forecast', 'No SOLD outcome', 'No canonical write authorized'],
+        source: {
+          kind: 'SWARM_RUN',
+          runId: run.id,
+          targetId,
+          decision: run.decision,
+          review: run.review,
+        },
+        observedAt: run.createdAt,
+      });
+      warnings.push('Run persisted to research_notes.');
+    } else {
+      warnings.push('Run was not persisted; no research notes repository is configured.');
+    }
     res.status(201).json(envelope(run, newContext(), {
       source: 'canonical.marketObservations',
       basis: UNKNOWN as never,
       currency: UNKNOWN,
-      warnings: [
-        'Role claims are proposals, never canonical facts.',
-        'The question text is not used as evidence.',
-      ],
+      warnings,
     }));
   });
 

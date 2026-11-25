@@ -14,6 +14,7 @@ import { createForecastRepository, type ForecastRepository } from './forecast.ts
 import { createJobsRepository, type JobsRepository } from './jobs.ts';
 import { createLearningRepository, type LearningRepository } from './learning.ts';
 import { createMarketObservationRepository, type MarketObservationRepository } from './marketObservation.ts';
+import { createResearchNoteRepository, type ResearchNoteRepository } from './researchNote.ts';
 
 export interface Repositories extends RepositoryBundle {
   evidence: EvidenceRepository;
@@ -26,6 +27,8 @@ export interface Repositories extends RepositoryBundle {
   identityDecisions: IdentityDecisionRepository;
   /** Absorbed source ids pointing at a surviving canonical card id. */
   aliases: AliasRepository;
+  /** Durable evidence-first research traces. */
+  researchNotes: ResearchNoteRepository;
   /**
    * Run canonical reads and writes in one atomic unit. The callback receives
    * repositories bound to the transaction; a throw rolls back every write.
@@ -43,6 +46,7 @@ export function createRepositories(store: DbStore): Repositories {
     jobs: createJobsRepository(store),
     identityDecisions: createIdentityDecisionRepository(store),
     aliases: createAliasRepository(store),
+    researchNotes: createResearchNoteRepository(store),
     transaction<T>(fn: (tx: Repositories) => Promise<T>): Promise<T> {
       return store.transaction((txStore) => fn(createRepositories(txStore)));
     },
@@ -72,3 +76,8 @@ export type { Forecast, ForecastInput, ForecastRepository } from './forecast.ts'
 export type { Job, JobInput, JobStatus, JobsRepository } from './jobs.ts';
 export type { LearningEvent, LearningEventInput, LearningRepository } from './learning.ts';
 export type { MarketObservationRepository } from './marketObservation.ts';
+export type {
+  ResearchNoteInput,
+  ResearchNoteRecord,
+  ResearchNoteRepository,
+} from './researchNote.ts';
