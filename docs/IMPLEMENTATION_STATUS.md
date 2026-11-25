@@ -38,7 +38,7 @@ Last verified counts:
 | `market_observations` | 261 |
 | `identity_decisions` | 275 |
 | `valuations` | 243 |
-| `research_notes` | 14 |
+| `research_notes` | 15 |
 | `forecasts` (DB table) | 0 |
 
 The 27 live forecasts are in the in-memory forecast repository, not in Postgres. An app restart clears them until regenerated.
@@ -126,6 +126,7 @@ Key commits include `f1126e8`, `7d26014`, `e87c727`, `cd684f8`, `4af4e57`, `704a
 ### 3.5 Research and pricing cycle
 
 - Research endpoint accepts the UI payload `{question, mode}` and builds evidence from canonical Postgres.
+- Every research run is now persisted to `research_notes` with cited evidence IDs, role claims, decision and source metadata. The note ID is derived from the content-addressed run ID, so repeats are idempotent and do not change `created_at`.
 - 4 post-repair research notes cite 6 resolvable evidence rows each, with 33 role claims each.
 - All current proposals are `REJECT`; no model claim was promoted to a canonical fact.
 - 27 forecasts were generated: 9 target cards × 7/30/90-day horizons, all `HYPOTHESIS`, with ordered price bands and zero unresolved evidence refs.
